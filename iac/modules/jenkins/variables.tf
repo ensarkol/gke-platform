@@ -26,6 +26,12 @@ variable "machine_type" {
   default = "e2-standard-2"
 }
 
+variable "jenkins_home_disk_size" {
+  description = "Size in GB of the persistent disk mounted at /var/lib/jenkins"
+  type        = number
+  default     = 20
+}
+
 variable "roles" {
   type = list(string)
 }

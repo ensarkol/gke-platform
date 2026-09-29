@@ -1,9 +1,9 @@
 output "jenkins_external_ip" {
-  value = google_compute_instance.jenkins.network_interface[0].access_config[0].nat_ip
+  value = google_compute_address.jenkins.address
 }
 
 output "jenkins_url" {
-  value = "http://${google_compute_instance.jenkins.network_interface[0].access_config[0].nat_ip}:8080"
+  value = "http://${google_compute_address.jenkins.address}:8080"
 }
 
 output "jenkins_admin_password" {

@@ -36,6 +36,19 @@ resource "random_password" "jenkins_admin" {
   special = false
 }
 
+# The VM is replaced whenever the startup script changes; JENKINS_HOME and the IP live outside it
+resource "google_compute_disk" "jenkins_home" {
+  name = "jenkins-home"
+  zone = var.zone
+  type = "pd-balanced"
+  size = var.jenkins_home_disk_size
+}
+
+resource "google_compute_address" "jenkins" {
+  name   = "jenkins"
+  region = var.region
+}
+
 resource "google_compute_instance" "jenkins" {
   name         = "jenkins"
   machine_type = var.machine_type
@@ -50,9 +63,16 @@ resource "google_compute_instance" "jenkins" {
     }
   }
 
+  attached_disk {
+    source      = google_compute_disk.jenkins_home.id
+    device_name = "jenkins-home"
+  }
+
   network_interface {
     subnetwork = var.subnetwork_id
-    access_config {}
+    access_config {
+      nat_ip = google_compute_address.jenkins.address
+    }
   }
 
   service_account {
