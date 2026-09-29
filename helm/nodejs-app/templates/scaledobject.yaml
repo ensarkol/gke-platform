@@ -9,6 +9,7 @@ spec:
   scaleTargetRef:
     name: {{ include "nodejs-app.fullname" . }}
   pollingInterval: 30
+  initialCooldownPeriod: {{ .Values.keda.initialCooldownPeriod }}
   cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
   idleReplicaCount: {{ .Values.keda.idleReplicaCount }}
   minReplicaCount: {{ .Values.keda.minReplicaCount }}

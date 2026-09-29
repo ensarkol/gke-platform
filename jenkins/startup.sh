@@ -183,12 +183,25 @@ jobs:
           stringParam('GIT_REPO_URL', '{git_repo}', 'Git repository URL')
           stringParam('ARTIFACT_REGISTRY_REPO', '{ar_repo}', 'Artifact Registry repo')
         }}
+        properties {{
+          pipelineTriggers {{
+            triggers {{
+              pollSCM {{ scmpoll_spec('H/2 * * * *') }}
+            }}
+          }}
+        }}
         definition {{
           cpsScm {{
             scm {{
               git {{
                 remote {{ url('{git_repo}') }}
                 branches('*/main')
+                extensions {{
+                  pathRestriction {{
+                    includedRegions('(app/|helm/|iac/k8s/app/|iac/modules/app/|jenkins/Jenkinsfile[.]app).*')
+                    excludedRegions('')
+                  }}
+                }}
               }}
             }}
             scriptPath('jenkins/Jenkinsfile.app')

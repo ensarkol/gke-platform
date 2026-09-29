@@ -111,6 +111,8 @@ VM ilk açılışta (5-10 dk) docker, gcloud, kubectl, helm, terraform, terragru
 
 Image tag'i boş bırakılırsa git commit SHA'sı kullanılır; her commit yeni bir tag üretir ve pod'lar yeni image'a geçer.
 
+`03-nodejs-app` main branch'i 2 dakikada bir poll eder; `app/`, `helm/`, `iac/k8s/app/`, `iac/modules/app/` veya `jenkins/Jenkinsfile.app` değişince varsayılan parametrelerle (deploy, SHA tag) kendiliğinden çalışır. Altyapı job'ları (`01`, `02`) bilinçli olarak manueldir.
+
 Pipeline'lar repo'yu `git_repo_url`'den çeker. Bunu `common.hcl` içine yazıp `jenkins` unit'ini tekrar apply et.
 
 ### GKE doğrulama
