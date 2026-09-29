@@ -210,5 +210,3 @@ kubectl -n agent port-forward svc/viewer-agent 8080:80
 cd iac
 terragrunt run --all destroy     # bağımlılıkların tersi sırasıyla siler
 ```
-
-GKE ve Jenkins VM maliyet üretir; işin bitince destroy etmeyi unutma.
