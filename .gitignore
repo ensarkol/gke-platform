@@ -1,0 +1,39 @@
+# Terraform / Terragrunt
+**/.terraform/
+**/.terragrunt-cache/
+.tf-plugin-cache/
+**/*.tfstate
+**/*.tfstate.*
+**/terraform.tfvars
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+
+# Secrets / local
+*.pem
+*.key
+.env
+.env.*
+
+# Node
+app/node_modules/
+npm-debug.log*
+
+# Python
+agent/.venv/
+agent/__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Docker
+*.tar

@@ -1,0 +1,40 @@
+pipeline {
+  agent any
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+
+  environment {
+    USE_GKE_GCLOUD_AUTH_PLUGIN = 'True'
+    TG_NON_INTERACTIVE         = 'true'
+    TG_DIR                     = 'iac/k8s/istio'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Terragrunt Action') {
+      steps {
+        dir("${TG_DIR}") {
+          script {
+            if (params.ACTION == 'plan') {
+              sh 'terragrunt plan -input=false'
+            } else if (params.ACTION == 'apply') {
+              sh 'terragrunt apply -input=false -auto-approve'
+            } else if (params.ACTION == 'destroy') {
+              sh 'terragrunt destroy -input=false -auto-approve'
+            } else {
+              error("Unknown ACTION: ${params.ACTION}")
+            }
+          }
+        }
+      }
+    }
+  }
+}

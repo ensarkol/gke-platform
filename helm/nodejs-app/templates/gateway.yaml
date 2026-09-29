@@ -1,0 +1,35 @@
+{{- if and .Values.istio.enabled (.Capabilities.APIVersions.Has "networking.istio.io/v1") }}
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.istio.gatewayName }}
+  labels:
+    {{- include "nodejs-app.labels" . | nindent 4 }}
+spec:
+  selector:
+    istio: ingress
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        {{- toYaml .Values.istio.hosts | nindent 8 }}
+{{- else if and .Values.istio.enabled (.Capabilities.APIVersions.Has "networking.istio.io/v1beta1") }}
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: {{ .Values.istio.gatewayName }}
+  labels:
+    {{- include "nodejs-app.labels" . | nindent 4 }}
+spec:
+  selector:
+    istio: ingress
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        {{- toYaml .Values.istio.hosts | nindent 8 }}
+{{- end }}

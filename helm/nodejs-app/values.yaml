@@ -1,0 +1,67 @@
+replicaCount: 3
+
+image:
+  repository: nodejs-app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: "nodejs-app"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+nodeSelector:
+  cloud.google.com/gke-nodepool: application-pool
+
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: application
+    effect: NoSchedule
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: nodejs-app
+        topologyKey: kubernetes.io/hostname
+
+istio:
+  enabled: true
+  gatewayName: nodejs-app-gateway
+  hosts:
+    - "*"
+
+keda:
+  enabled: true
+  minReplicaCount: 3
+  maxReplicaCount: 5
+  idleReplicaCount: 0
+  cooldownPeriod: 300
+  prometheus:
+    serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc:9090
+    metricName: istio_requests_total
+    query: sum(increase(istio_requests_total{reporter="source",destination_service_name="nodejs-app"}[1h]))
+    threshold: "1"
+    activationThreshold: "0"
+
+serviceAccount:
+  create: true
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3000"
+  prometheus.io/path: "/metrics"

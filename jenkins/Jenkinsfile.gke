@@ -1,0 +1,51 @@
+pipeline {
+  agent any
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+
+  environment {
+    USE_GKE_GCLOUD_AUTH_PLUGIN = 'True'
+    TG_NON_INTERACTIVE         = 'true'
+    VPC_DIR                    = 'iac/vpc/gke-vpc'
+    NAT_DIR                    = 'iac/cloud-nat/gke-nat'
+    GKE_DIR                    = 'iac/gke'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Plan') {
+      when { expression { params.ACTION == 'plan' } }
+      steps {
+        dir("${VPC_DIR}") { sh 'terragrunt plan -input=false' }
+        dir("${NAT_DIR}") { sh 'terragrunt plan -input=false' }
+        dir("${GKE_DIR}") { sh 'terragrunt plan -input=false' }
+      }
+    }
+
+    stage('Apply') {
+      when { expression { params.ACTION == 'apply' } }
+      steps {
+        dir("${VPC_DIR}") { sh 'terragrunt apply -input=false -auto-approve' }
+        dir("${NAT_DIR}") { sh 'terragrunt apply -input=false -auto-approve' }
+        dir("${GKE_DIR}") { sh 'terragrunt apply -input=false -auto-approve' }
+      }
+    }
+
+    stage('Destroy') {
+      when { expression { params.ACTION == 'destroy' } }
+      steps {
+        dir("${GKE_DIR}") { sh 'terragrunt destroy -input=false -auto-approve' }
+        dir("${NAT_DIR}") { sh 'terragrunt destroy -input=false -auto-approve' }
+        dir("${VPC_DIR}") { sh 'terragrunt destroy -input=false -auto-approve' }
+      }
+    }
+  }
+}

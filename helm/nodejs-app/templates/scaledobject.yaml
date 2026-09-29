@@ -1,0 +1,24 @@
+{{- if and .Values.keda.enabled (.Capabilities.APIVersions.Has "keda.sh/v1alpha1") }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "nodejs-app.fullname" . }}
+  labels:
+    {{- include "nodejs-app.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "nodejs-app.fullname" . }}
+  pollingInterval: 30
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  idleReplicaCount: {{ .Values.keda.idleReplicaCount }}
+  minReplicaCount: {{ .Values.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.keda.prometheus.serverAddress | quote }}
+        metricName: {{ .Values.keda.prometheus.metricName | quote }}
+        query: {{ .Values.keda.prometheus.query | quote }}
+        threshold: {{ .Values.keda.prometheus.threshold | quote }}
+        activationThreshold: {{ .Values.keda.prometheus.activationThreshold | quote }}
+{{- end }}
