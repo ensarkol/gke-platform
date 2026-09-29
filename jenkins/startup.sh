@@ -11,8 +11,9 @@ REGION=$(curl -sf "${H[@]}" "$META/region")
 ARTIFACT_REGISTRY_REPO=$(curl -sf "${H[@]}" "$META/artifact-registry-repo")
 GIT_REPO_URL=$(curl -sf "${H[@]}" "$META/git-repo-url" || true)
 JENKINS_ADMIN_PASSWORD=$(curl -sf "${H[@]}" "$META/jenkins-admin-password")
+EXTERNAL_IP=$(curl -sf "${H[@]}" "http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip")
 
-export PROJECT_ID REGION ARTIFACT_REGISTRY_REPO GIT_REPO_URL JENKINS_ADMIN_PASSWORD
+export PROJECT_ID REGION ARTIFACT_REGISTRY_REPO GIT_REPO_URL JENKINS_ADMIN_PASSWORD EXTERNAL_IP
 
 apt-get update
 apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release \
@@ -103,6 +104,7 @@ project = os.environ["PROJECT_ID"]
 region = os.environ["REGION"]
 git_repo = os.environ.get("GIT_REPO_URL", "")
 ar_repo = os.environ.get("ARTIFACT_REGISTRY_REPO", "test")
+external_ip = os.environ["EXTERNAL_IP"]
 
 casc = f"""
 jenkins:
@@ -120,7 +122,7 @@ jenkins:
 
 unclassified:
   location:
-    url: "http://localhost:8080/"
+    url: "http://{external_ip}:8080/"
 
 jobs:
   - script: |
@@ -177,7 +179,7 @@ jobs:
           stringParam('REGION', '{region}', 'GCP region')
           stringParam('ZONE', 'europe-west1-b', 'GCP zone')
           stringParam('CLUSTER_NAME', 'test-gke', 'GKE cluster name')
-          stringParam('IMAGE_TAG', 'latest', 'Container image tag')
+          stringParam('IMAGE_TAG', '', 'Container image tag (empty = git commit SHA)')
           stringParam('GIT_REPO_URL', '{git_repo}', 'Git repository URL')
           stringParam('ARTIFACT_REGISTRY_REPO', '{ar_repo}', 'Artifact Registry repo')
         }}
@@ -190,6 +192,31 @@ jobs:
               }}
             }}
             scriptPath('jenkins/Jenkinsfile.app')
+          }}
+        }}
+      }}
+
+  - script: |
+      pipelineJob('04-viewer-agent') {{
+        parameters {{
+          choiceParam('ACTION', ['deploy', 'destroy'], 'Deploy action')
+          stringParam('PROJECT_ID', '{project}', 'GCP project ID')
+          stringParam('REGION', '{region}', 'GCP region')
+          stringParam('ZONE', 'europe-west1-b', 'GCP zone')
+          stringParam('CLUSTER_NAME', 'test-gke', 'GKE cluster name')
+          stringParam('IMAGE_TAG', '', 'Container image tag (empty = git commit SHA)')
+          stringParam('GIT_REPO_URL', '{git_repo}', 'Git repository URL')
+          stringParam('ARTIFACT_REGISTRY_REPO', '{ar_repo}', 'Artifact Registry repo')
+        }}
+        definition {{
+          cpsScm {{
+            scm {{
+              git {{
+                remote {{ url('{git_repo}') }}
+                branches('*/main')
+              }}
+            }}
+            scriptPath('jenkins/Jenkinsfile.agent')
           }}
         }}
       }}

@@ -35,7 +35,6 @@ app/                             # Express + /metrics
 helm/nodejs-app/                 # Deployment, Gateway, VirtualService, ScaledObject
 jenkins/                         # startup.sh + Jenkinsfile'lar
 agent/                           # FastAPI + Gemini viewer agent
-scripts/
 ```
 
 GCP kaynakları Google'ın resmi Terraform modülleriyle kurulur:
@@ -107,15 +106,17 @@ VM ilk açılışta (5-10 dk) docker, gcloud, kubectl, helm, terraform, terragru
 |-----|----------|
 | `01-gke-cluster` | `iac/vpc/gke-vpc` + `iac/cloud-nat/gke-nat` + `iac/gke` plan / apply / destroy |
 | `02-istio` | `iac/k8s/istio` plan / apply / destroy |
-| `03-nodejs-app` | image build+push + `iac/k8s/app` (Helm) deploy / destroy |
+| `03-nodejs-app` | `nodejs-app` image build+push + `iac/k8s/app` (Helm) deploy / destroy |
+| `04-viewer-agent` | `viewer-agent` image build+push + `iac/k8s/agent` deploy / destroy (Grafana port-forward'u pipeline açar) |
+
+Image tag'i boş bırakılırsa git commit SHA'sı kullanılır; her commit yeni bir tag üretir ve pod'lar yeni image'a geçer.
 
 Pipeline'lar repo'yu `git_repo_url`'den çeker. Bunu `common.hcl` içine yazıp `jenkins` unit'ini tekrar apply et.
 
 ### GKE doğrulama
 
 ```bash
-cd iac/gke
-$(terragrunt output -raw get_credentials_command)
+gcloud container clusters get-credentials test-gke --zone europe-west1-b --project test-devops-case
 kubectl get nodes -L cloud.google.com/gke-nodepool
 ```
 
@@ -149,10 +150,7 @@ kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
 
 ### Node.js uygulaması
 
-```bash
-./scripts/build-push.sh                         # nodejs-app + viewer-agent image'ları
-cd iac/k8s/app && terragrunt apply   # IMAGE_TAG=v1 terragrunt apply ile tag seçilebilir
-```
+Jenkins'te `03-nodejs-app` job'unu `ACTION=deploy` ile çalıştır: image'ı build/push eder ve chart'ı kurar.
 
 Doğrulama:
 
@@ -188,12 +186,9 @@ kubectl -n elastic-system port-forward svc/test-kb-kb-http 5601
 
 ### Viewer analiz agent'ı
 
-Grafana provider'ı için port-forward açık olmalı. Grafana şifresi `k8s/prometheus-stack` output'undan otomatik okunur.
+Jenkins'te `04-viewer-agent` job'unu `ACTION=deploy` ile çalıştır. Pipeline image'ı build/push eder, Grafana'ya port-forward açar (agent Grafana'da viewer service account oluşturur) ve `iac/k8s/agent`'ı apply eder. Grafana şifresi `k8s/prometheus-stack` output'undan otomatik okunur.
 
 ```bash
-kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80 &
-cd iac/k8s/agent && terragrunt apply
-
 kubectl -n agent port-forward svc/viewer-agent 8080:80
 # Tarayıcı: http://localhost:8080
 ```

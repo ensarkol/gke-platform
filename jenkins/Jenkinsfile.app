@@ -17,6 +17,10 @@ pipeline {
     stage('Checkout') {
       steps {
         checkout scm
+        script {
+          // A unique tag per commit; reusing "latest" with IfNotPresent would never roll out new code
+          env.TAG = params.IMAGE_TAG?.trim() ?: sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+        }
       }
     }
 
@@ -25,8 +29,8 @@ pipeline {
       steps {
         sh '''
           gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-          docker build -t "${IMAGE_NAME}:${IMAGE_TAG}" -f app/Dockerfile app/
-          docker push "${IMAGE_NAME}:${IMAGE_TAG}"
+          docker build -t "${IMAGE_NAME}:${TAG}" -f app/Dockerfile app/
+          docker push "${IMAGE_NAME}:${TAG}"
         '''
       }
     }
@@ -35,7 +39,7 @@ pipeline {
     stage('Helm Deploy') {
       when { expression { params.ACTION == 'deploy' } }
       steps {
-        dir("${TG_DIR}") { sh 'terragrunt apply -input=false -auto-approve' }
+        dir("${TG_DIR}") { sh 'IMAGE_TAG="$TAG" terragrunt apply -input=false -auto-approve' }
       }
     }
 

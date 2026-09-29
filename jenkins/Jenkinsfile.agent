@@ -1,0 +1,58 @@
+pipeline {
+  agent any
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+
+  environment {
+    USE_GKE_GCLOUD_AUTH_PLUGIN = 'True'
+    TG_NON_INTERACTIVE         = 'true'
+    TG_DIR                     = 'iac/k8s/agent'
+    IMAGE_NAME                 = "${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REGISTRY_REPO}/viewer-agent"
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+        script {
+          env.TAG = params.IMAGE_TAG?.trim() ?: sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+        }
+      }
+    }
+
+    stage('Build & Push') {
+      when { expression { params.ACTION == 'deploy' } }
+      steps {
+        sh '''
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build -t "${IMAGE_NAME}:${TAG}" -f agent/Dockerfile agent/
+          docker push "${IMAGE_NAME}:${TAG}"
+        '''
+      }
+    }
+
+    // The grafana provider in iac/k8s/agent talks to Grafana on localhost:3000
+    stage('Deploy') {
+      when { expression { params.ACTION == 'deploy' || params.ACTION == 'destroy' } }
+      steps {
+        sh '''
+          gcloud container clusters get-credentials "$CLUSTER_NAME" --zone "$ZONE" --project "$PROJECT_ID"
+          kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80 > port-forward.log 2>&1 &
+          PF_PID=$!
+          trap 'kill $PF_PID' EXIT
+          for i in $(seq 1 30); do curl -sf http://localhost:3000/api/health > /dev/null && break; sleep 1; done
+
+          cd "$TG_DIR"
+          if [ "$ACTION" = "deploy" ]; then
+            IMAGE_TAG="$TAG" terragrunt apply -input=false -auto-approve
+          else
+            terragrunt destroy -input=false -auto-approve
+          fi
+        '''
+      }
+    }
+  }
+}
