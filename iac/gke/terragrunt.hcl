@@ -64,26 +64,28 @@ inputs = {
 
   node_pools = [
     {
-      name               = "main-pool"
-      machine_type       = "e2-standard-4"
-      min_count          = 1
-      max_count          = 3
-      initial_node_count = 1
-      disk_size_gb       = 50
-      disk_type          = "pd-balanced"
-      auto_repair        = true
-      auto_upgrade       = true
+      name                 = "main-pool"
+      machine_type         = "e2-standard-4"
+      min_count            = 1
+      max_count            = 3
+      initial_node_count   = 1
+      disk_size_gb         = 50
+      disk_type            = "pd-balanced"
+      auto_repair          = true
+      auto_upgrade         = true
+      enable_private_nodes = true
     },
     {
-      name               = "application-pool"
-      machine_type       = "e2-medium"
-      min_count          = 3
-      max_count          = 5
-      initial_node_count = 3
-      disk_size_gb       = 40
-      disk_type          = "pd-balanced"
-      auto_repair        = true
-      auto_upgrade       = true
+      name                 = "application-pool"
+      machine_type         = "e2-medium"
+      min_count            = 0
+      max_count            = 3
+      initial_node_count   = 3
+      disk_size_gb         = 40
+      disk_type            = "pd-balanced"
+      auto_repair          = true
+      auto_upgrade         = true
+      enable_private_nodes = true
     },
   ]
 
