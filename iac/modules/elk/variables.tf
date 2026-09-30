@@ -19,10 +19,15 @@ variable "cluster_name" {
 
 variable "eck_operator_version" {
   type    = string
-  default = "2.14.0"
+  default = "3.5.0"
+}
+
+variable "eck_stack_version" {
+  type    = string
+  default = "0.20.0"
 }
 
 variable "elastic_version" {
   type    = string
-  default = "8.15.0"
+  default = "9.5.4"
 }

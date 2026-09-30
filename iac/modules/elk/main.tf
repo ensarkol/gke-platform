@@ -1,3 +1,7 @@
+locals {
+  main_pool = { "cloud.google.com/gke-nodepool" = "main-pool" }
+}
+
 resource "kubernetes_namespace" "elastic" {
   metadata {
     name = "elastic-system"
@@ -15,228 +19,139 @@ resource "helm_release" "eck_operator" {
 
   values = [
     yamlencode({
-      nodeSelector = {
-        "cloud.google.com/gke-nodepool" = "main-pool"
-      }
+      nodeSelector = local.main_pool
     })
   ]
 }
 
-# Wait for CRDs to be established
-resource "time_sleep" "wait_eck_crds" {
-  depends_on      = [helm_release.eck_operator]
-  create_duration = "30s"
-}
+# Elasticsearch/Kibana/Beat CRs are rendered by the chart instead of kubernetes_manifest,
+# because the ECK CRDs don't exist yet when Terraform plans.
+resource "helm_release" "eck_stack" {
+  name       = "eck-stack"
+  repository = "https://helm.elastic.co"
+  chart      = "eck-stack"
+  version    = var.eck_stack_version
+  namespace  = kubernetes_namespace.elastic.metadata[0].name
+  timeout    = 600
 
-resource "kubernetes_manifest" "elasticsearch" {
-  manifest = {
-    apiVersion = "elasticsearch.k8s.elastic.co/v1"
-    kind       = "Elasticsearch"
-    metadata = {
-      name      = "test-es"
-      namespace = kubernetes_namespace.elastic.metadata[0].name
-    }
-    spec = {
-      version = var.elastic_version
-      nodeSets = [
-        {
-          name  = "default"
-          count = 1
-          config = {
-            "node.store.allow_mmap" = false
-          }
+  values = [
+    yamlencode({
+      eck-elasticsearch = {
+        fullnameOverride = "test-es"
+        version          = var.elastic_version
+        nodeSets = [{
+          name   = "default"
+          count  = 1
+          config = { "node.store.allow_mmap" = false }
           podTemplate = {
             spec = {
-              nodeSelector = {
-                "cloud.google.com/gke-nodepool" = "main-pool"
-              }
-              containers = [
-                {
-                  name = "elasticsearch"
-                  resources = {
-                    requests = {
-                      memory = "1Gi"
-                      cpu    = "500m"
-                    }
-                    limits = {
-                      memory = "2Gi"
-                      cpu    = "1"
-                    }
-                  }
-                }
-              ]
-            }
-          }
-          volumeClaimTemplates = [
-            {
-              metadata = {
-                name = "elasticsearch-data"
-              }
-              spec = {
-                accessModes = ["ReadWriteOnce"]
+              nodeSelector = local.main_pool
+              containers = [{
+                name = "elasticsearch"
                 resources = {
-                  requests = {
-                    storage = "20Gi"
-                  }
+                  requests = { memory = "2Gi", cpu = "500m" }
+                  limits   = { memory = "2Gi" }
                 }
-              }
+              }]
             }
-          ]
-        }
-      ]
-    }
-  }
-
-  depends_on = [time_sleep.wait_eck_crds]
-  field_manager {
-    force_conflicts = true
-  }
-}
-
-resource "kubernetes_manifest" "kibana" {
-  manifest = {
-    apiVersion = "kibana.k8s.elastic.co/v1"
-    kind       = "Kibana"
-    metadata = {
-      name      = "test-kb"
-      namespace = kubernetes_namespace.elastic.metadata[0].name
-    }
-    spec = {
-      version = var.elastic_version
-      count   = 1
-      elasticsearchRef = {
-        name = "test-es"
-      }
-      podTemplate = {
-        spec = {
-          nodeSelector = {
-            "cloud.google.com/gke-nodepool" = "main-pool"
           }
-        }
-      }
-    }
-  }
-
-  depends_on = [kubernetes_manifest.elasticsearch]
-  field_manager {
-    force_conflicts = true
-  }
-}
-
-resource "kubernetes_manifest" "filebeat" {
-  manifest = {
-    apiVersion = "beat.k8s.elastic.co/v1beta1"
-    kind       = "Beat"
-    metadata = {
-      name      = "filebeat"
-      namespace = kubernetes_namespace.elastic.metadata[0].name
-    }
-    spec = {
-      type    = "filebeat"
-      version = var.elastic_version
-      elasticsearchRef = {
-        name = "test-es"
-      }
-      kibanaRef = {
-        name = "test-kb"
-      }
-      config = {
-        filebeat = {
-          inputs = [
-            {
-              type  = "container"
-              paths = ["/var/log/containers/*.log"]
-              processors = [
-                {
-                  add_kubernetes_metadata = {
-                    host = "$${NODE_NAME}"
-                    matchers = [
-                      {
-                        logs_path = {
-                          logs_path = "/var/log/containers/"
-                        }
-                      }
-                    ]
-                  }
-                }
-              ]
+          volumeClaimTemplates = [{
+            metadata = { name = "elasticsearch-data" }
+            spec = {
+              accessModes = ["ReadWriteOnce"]
+              resources   = { requests = { storage = "20Gi" } }
             }
-          ]
-        }
+          }]
+        }]
       }
-      daemonSet = {
+
+      eck-kibana = {
+        fullnameOverride = "test-kb"
+        version          = var.elastic_version
+        count            = 1
+        elasticsearchRef = { name = "test-es" }
         podTemplate = {
           spec = {
-            serviceAccountName           = "filebeat"
-            automountServiceAccountToken = true
-            tolerations = [
-              {
-                operator = "Exists"
+            nodeSelector = local.main_pool
+            containers = [{
+              name = "kibana"
+              resources = {
+                requests = { memory = "1Gi", cpu = "200m" }
+                limits   = { memory = "1Gi" }
               }
-            ]
-            containers = [
-              {
-                name = "filebeat"
-                env = [
-                  {
-                    name = "NODE_NAME"
-                    valueFrom = {
-                      fieldRef = {
-                        fieldPath = "spec.nodeName"
-                      }
-                    }
-                  }
-                ]
-                volumeMounts = [
-                  {
-                    name      = "varlogcontainers"
-                    mountPath = "/var/log/containers"
-                    readOnly  = true
-                  },
-                  {
-                    name      = "varlogpods"
-                    mountPath = "/var/log/pods"
-                    readOnly  = true
-                  },
-                  {
-                    name      = "varlibdockercontainers"
-                    mountPath = "/var/lib/docker/containers"
-                    readOnly  = true
-                  },
-                ]
-              }
-            ]
-            volumes = [
-              {
-                name = "varlogcontainers"
-                hostPath = {
-                  path = "/var/log/containers"
-                }
-              },
-              {
-                name = "varlogpods"
-                hostPath = {
-                  path = "/var/log/pods"
-                }
-              },
-              {
-                name = "varlibdockercontainers"
-                hostPath = {
-                  path = "/var/lib/docker/containers"
-                }
-              },
-            ]
-            dnsPolicy = "ClusterFirstWithHostNet"
+            }]
           }
         }
       }
-    }
-  }
 
-  depends_on = [kubernetes_manifest.kibana]
-  field_manager {
-    force_conflicts = true
-  }
+      eck-beats = {
+        enabled          = true
+        fullnameOverride = "filebeat"
+        type             = "filebeat"
+        version          = var.elastic_version
+        elasticsearchRef = { name = "test-es" }
+        kibanaRef        = { name = "test-kb" }
+        config = {
+          filebeat = {
+            inputs = [{
+              type  = "filestream"
+              id    = "kubernetes-container-logs"
+              paths = ["/var/log/containers/*.log"]
+              parsers = [{
+                container = {}
+              }]
+              prospector = {
+                scanner = { symlinks = true }
+              }
+              processors = [{
+                add_kubernetes_metadata = {
+                  host = "$${NODE_NAME}"
+                  matchers = [{
+                    logs_path = { logs_path = "/var/log/containers/" }
+                  }]
+                }
+              }]
+            }]
+          }
+        }
+        daemonSet = {
+          podTemplate = {
+            spec = {
+              serviceAccountName           = kubernetes_service_account.filebeat.metadata[0].name
+              automountServiceAccountToken = true
+              # Node log files are root-owned
+              securityContext = { runAsUser = 0 }
+              tolerations     = [{ operator = "Exists" }]
+              containers = [{
+                name = "filebeat"
+                env = [{
+                  name      = "NODE_NAME"
+                  valueFrom = { fieldRef = { fieldPath = "spec.nodeName" } }
+                }]
+                resources = {
+                  requests = { memory = "200Mi", cpu = "50m" }
+                  limits   = { memory = "300Mi" }
+                }
+                volumeMounts = [
+                  { name = "varlogcontainers", mountPath = "/var/log/containers", readOnly = true },
+                  { name = "varlogpods", mountPath = "/var/log/pods", readOnly = true },
+                ]
+              }]
+              volumes = [
+                { name = "varlogcontainers", hostPath = { path = "/var/log/containers" } },
+                { name = "varlogpods", hostPath = { path = "/var/log/pods" } },
+              ]
+            }
+          }
+        }
+      }
+    })
+  ]
+
+  depends_on = [
+    helm_release.eck_operator,
+    kubernetes_cluster_role_binding.filebeat,
+  ]
 }
 
 resource "kubernetes_service_account" "filebeat" {
@@ -278,7 +193,6 @@ resource "kubernetes_cluster_role_binding" "filebeat" {
   }
 }
 
-# Create Kibana data view (index pattern) via Job after Kibana is ready
 resource "kubernetes_job" "kibana_dataview" {
   metadata {
     name      = "kibana-create-dataview"
@@ -295,9 +209,7 @@ resource "kubernetes_job" "kibana_dataview" {
       }
       spec {
         restart_policy = "OnFailure"
-        node_selector = {
-          "cloud.google.com/gke-nodepool" = "main-pool"
-        }
+        node_selector  = local.main_pool
         container {
           name  = "curl"
           image = "curlimages/curl:8.10.1"
@@ -338,10 +250,7 @@ resource "kubernetes_job" "kibana_dataview" {
 
   wait_for_completion = false
 
-  depends_on = [
-    kubernetes_manifest.kibana,
-    kubernetes_manifest.filebeat,
-  ]
+  depends_on = [helm_release.eck_stack]
 
   timeouts {
     create = "5m"

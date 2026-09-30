@@ -17,6 +17,7 @@ dependency "gke" {
 
 inputs = {
   cluster_name         = dependency.gke.outputs.name
-  eck_operator_version = "2.14.0"
-  elastic_version      = "8.15.0"
+  eck_operator_version = "3.5.0"
+  eck_stack_version    = "0.20.0"
+  elastic_version      = "9.5.4"
 }
