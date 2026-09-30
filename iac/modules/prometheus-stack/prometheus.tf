@@ -4,7 +4,10 @@ locals {
     type = "telegram"
     settings = {
       bottoken = "$TELEGRAM_BOT_TOKEN"
-      chatid   = "$TELEGRAM_CHAT_ID"
+      # Grafana turns numeric env values into numbers, but chatid must be a
+      # string. The trailing newline makes this a YAML block scalar, which
+      # keeps it a string (grafana/grafana#69950).
+      chatid = "$TELEGRAM_CHAT_ID\n"
     }
     disableResolveMessage = false
   }
