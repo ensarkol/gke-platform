@@ -61,7 +61,7 @@ flowchart TB
 
 ### How the pieces fit together
 
-- **Networking.** Jenkins and GKE each have their own VPC. The Jenkins firewall allows SSH and port 8080 only from the addresses listed in `allowed_cidrs`. Both GKE node pools use private nodes (`enable_private_nodes`), so nodes have only internal IPs and reach the internet through Cloud NAT in `test-vpc`. Google APIs and Artifact Registry are reached through Private Google Access on the subnet. The control plane keeps its public endpoint, so Jenkins and operators can still run `kubectl`.
+- **Networking.** Jenkins and GKE each have their own VPC. The Jenkins firewall allows SSH and port 8080 only from the addresses in `JENKINS_ALLOWED_CIDRS`. Both GKE node pools use private nodes (`enable_private_nodes`), so nodes have only internal IPs and reach the internet through Cloud NAT in `test-vpc`. Google APIs and Artifact Registry are reached through Private Google Access on the subnet. The control plane keeps its public endpoint, so Jenkins and operators can still run `kubectl`.
 - **Node pools.** `main-pool` runs the platform components. `application-pool` has a `dedicated=application:NoSchedule` taint, so only the Node.js service, which tolerates the taint, is scheduled there. Required pod anti-affinity places each application pod on a different node.
 - **Traffic.** Requests reach the `istio-ingress` LoadBalancer and are routed to the service by an Istio `Gateway` and `VirtualService`. The gateway accepts only the `<ingress-ip>.nip.io` host. Requests to the bare IP get a 404, so internet scanners are not counted as traffic and don't keep the service awake.
 - **Egress.** A `Sidecar` resource puts the `apps` namespace in `REGISTRY_ONLY` mode, so the service can only reach destinations that are registered in the mesh. External hosts are allowed through a `ServiceEntry` (`istio.egress.hosts` in the chart, `api.github.com` by default). A `VirtualService` sends that traffic to `istio-egress`, which forwards it as TLS passthrough, and from there it leaves through Cloud NAT. Other namespaces keep the default `ALLOW_ANY` policy, because the viewer agent calls Google APIs directly.
@@ -76,7 +76,7 @@ Each resource lives in its own folder with its own `terragrunt.hcl` and its own 
 
 ```text
 iac/
-  common.hcl                     project_id, region, zone, cluster_name, allowed_cidrs
+  common.hcl                     project_id, region, zone, cluster_name
   root.hcl                       GCS remote state and shared inputs
   google-provider.hcl            google / google-beta provider for registry modules
   apis/                          Google APIs
@@ -140,8 +140,9 @@ flowchart LR
 ## Prerequisites
 
 - A GCP project with billing enabled. The project and region are set in `iac/common.hcl`.
-- `gcloud`, `terraform` >= 1.5, `terragrunt` >= 0.80, `kubectl`, `helm` and `docker`.
+- `gcloud`, `terraform` >= 1.11, `terragrunt` >= 0.80, `kubectl`, `helm` and `docker`. The Jenkins module uses an ephemeral resource and a write-only attribute, which need Terraform 1.11.
 - Credentials from `gcloud auth login` and `gcloud auth application-default login`.
+- `JENKINS_ALLOWED_CIDRS` set to the comma-separated list of addresses that may reach Jenkins, for example `export JENKINS_ALLOWED_CIDRS="203.0.113.10/32,198.51.100.0/24"`. The `vpc/jenkins-vpc` unit and the units that read its outputs fail without it, so the firewall is never applied with an empty source list. Addresses are kept out of the repository.
 
 ## Provisioning
 
@@ -157,7 +158,7 @@ cd ../../jenkins           && terragrunt apply
 cd ../gke                  && terragrunt apply
 ```
 
-`terragrunt run --all apply` from `iac/` or from any subfolder applies all the units below it in dependency order.
+`terragrunt run --all apply` from `iac/` or from any subfolder applies all the units below it in dependency order. Two units need something outside Terraform: `k8s/agent` talks to Grafana through `http://localhost:3000`, so a port-forward to Grafana must be open while it is applied or destroyed (`04-viewer-agent` opens one itself), and the Telegram secret described below has to exist before alerts can be delivered.
 
 ### Jenkins
 
@@ -218,14 +219,15 @@ The official Istio dashboards from grafana.com are installed in the `istio` fold
 
 The kube-prometheus-stack dashboards cover the pods themselves. For example, **Kubernetes / Compute Resources / Namespace (Pods)** with namespace `apps` shows CPU and memory per replica, which makes the scale-to-zero cycle visible.
 
-Grafana's alerting configuration (contact point, notification policy and the `PodRestartDetected` rule) is provisioned from files. The rule fires when `kube_pod_container_status_restarts_total` increases within five minutes. Notifications go to Telegram when `telegram_chat_id` is set in `iac/k8s/prometheus-stack/terragrunt.hcl`. The bot token is kept out of git and out of Terraform state: Grafana reads it from a secret that is created separately.
+Grafana's alerting configuration (contact point, notification policy and the `PodRestartDetected` rule) is provisioned from files. The rule fires when `kube_pod_container_status_restarts_total` increases within five minutes. Notifications go to Telegram when `telegram_enabled` is true in `iac/k8s/prometheus-stack/terragrunt.hcl`. The bot token and the chat id are kept out of git and out of Terraform state: Grafana reads both from a secret that is created separately, and the provisioned contact point refers to them as `$TELEGRAM_BOT_TOKEN` and `$TELEGRAM_CHAT_ID`.
 
 ```bash
 kubectl -n monitoring create secret generic grafana-telegram \
-  --from-literal=TELEGRAM_BOT_TOKEN='<bot token>'
+  --from-literal=TELEGRAM_BOT_TOKEN='<bot token>' \
+  --from-literal=TELEGRAM_CHAT_ID='<chat id>'
 ```
 
-When `telegram_chat_id` is empty, the contact point falls back to a placeholder webhook.
+The secret is optional for Grafana to start, so a missing secret does not break the stack, but alerts are not delivered until it exists. When `telegram_enabled` is false, the contact point falls back to a placeholder webhook.
 
 The alert can be exercised with a pod that exits every 20 seconds. The alert fires within a few minutes. Deleting the pod resolves it:
 
@@ -277,7 +279,9 @@ sum(increase(istio_requests_total{reporter="source",destination_service_name="no
 | No requests for one hour | 0 |
 | First hour after a deploy | 3 (`initialCooldownPeriod`) |
 
-While the service is at zero replicas, the first requests receive a 503 from the gateway. They are still recorded by the ingress metrics, and KEDA brings the replicas back within its polling interval.
+The query looks at the last hour and KEDA then waits for `cooldownPeriod` (5 minutes) before scaling in, so the service reaches zero about 65 minutes after the last request.
+
+While the service is at zero replicas, the first requests receive a 503 from the gateway. They are still recorded by the ingress metrics, and KEDA brings the replicas back within its polling interval. `increase()` needs two samples of a series to see a change, so right after the ingress gateway or Prometheus restarts, a single request may not be enough; a second request a few seconds later wakes the service. Prometheus runs without persistent storage, so a Prometheus restart also clears the one-hour window and can scale the service to zero early.
 
 A steady stream of requests wakes the service and keeps it running:
 
@@ -331,6 +335,8 @@ The chat UI is served at `http://localhost:8080`.
 | Kubernetes | ClusterRole with get/list/watch, no access to secrets |
 | Grafana | Service account with the Viewer role |
 
+All roles are read-only except `roles/aiplatform.user`, which only allows the agent to call Gemini on Vertex AI and grants no access to other resources.
+
 The agent calls `gemini-3.5-flash` through the Vertex AI `global` endpoint, because Gemini 3.x models are not served in `europe-west1`. The model and location are set by the `gemini_model` and `gemini_location` inputs in `iac/k8s/agent/terragrunt.hcl`. Requests that would change something, such as deleting a deployment, are refused.
 
 ## Teardown
@@ -340,4 +346,4 @@ cd iac
 terragrunt run --all destroy
 ```
 
-Units are destroyed in reverse dependency order.
+Units are destroyed in reverse dependency order, so the Kubernetes layer goes first. This matters because GKE creates some resources outside Terraform: the forwarding rule and `k8s-fw-*` firewall rules of the `istio-ingress` LoadBalancer, and the persistent disk of Elasticsearch. Destroying only `gke`, `cloud-nat/gke-nat` and `vpc/gke-vpc` (for example with `01-gke-cluster` and `ACTION=destroy`) can leave them behind and block the VPC deletion with "resource in use". Destroy `k8s/app`, `k8s/elk` and `k8s/istio` first in that case, and the Kubernetes units' state is cleaned up with them. As with apply, a Grafana port-forward has to be open while `k8s/agent` is destroyed.
