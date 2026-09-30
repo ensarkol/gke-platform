@@ -7,7 +7,8 @@ include "provider" {
 }
 
 locals {
-  common = read_terragrunt_config(find_in_parent_folders("common.hcl")).locals
+  common        = read_terragrunt_config(find_in_parent_folders("common.hcl")).locals
+  allowed_cidrs = [for c in split(",", get_env("JENKINS_ALLOWED_CIDRS")) : trimspace(c)]
 }
 
 terraform {
@@ -35,13 +36,13 @@ inputs = {
   ingress_rules = [
     {
       name          = "jenkins-allow-ssh"
-      source_ranges = local.common.allowed_cidrs
+      source_ranges = local.allowed_cidrs
       target_tags   = ["jenkins"]
       allow         = [{ protocol = "tcp", ports = ["22"] }]
     },
     {
       name          = "jenkins-allow-ui"
-      source_ranges = local.common.allowed_cidrs
+      source_ranges = local.allowed_cidrs
       target_tags   = ["jenkins"]
       allow         = [{ protocol = "tcp", ports = ["8080"] }]
     },

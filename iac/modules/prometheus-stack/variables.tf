@@ -29,10 +29,10 @@ variable "alert_webhook_url" {
   default     = "http://localhost:9090"
 }
 
-variable "telegram_chat_id" {
-  description = "Telegram chat/channel id for the pod restart alert; empty keeps the webhook contact point"
-  type        = string
-  default     = ""
+variable "telegram_enabled" {
+  description = "Send the pod restart alert to Telegram using TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from the grafana-telegram secret; false keeps the webhook contact point"
+  type        = bool
+  default     = false
 }
 
 variable "kube_prometheus_stack_version" {

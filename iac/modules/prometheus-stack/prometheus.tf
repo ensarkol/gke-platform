@@ -4,7 +4,7 @@ locals {
     type = "telegram"
     settings = {
       bottoken = "$TELEGRAM_BOT_TOKEN"
-      chatid   = var.telegram_chat_id
+      chatid   = "$TELEGRAM_CHAT_ID"
     }
     disableResolveMessage = false
   }
@@ -14,7 +14,7 @@ locals {
     settings              = { url = var.alert_webhook_url }
     disableResolveMessage = false
   }
-  alert_receiver = [local.telegram_receiver, local.webhook_receiver][var.telegram_chat_id != "" ? 0 : 1]
+  alert_receiver = [local.telegram_receiver, local.webhook_receiver][var.telegram_enabled ? 0 : 1]
 }
 
 resource "kubernetes_namespace" "monitoring" {

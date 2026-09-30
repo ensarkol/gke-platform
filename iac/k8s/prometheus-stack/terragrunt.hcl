@@ -23,5 +23,5 @@ inputs = {
   cluster_name                  = dependency.gke.outputs.name
   kube_prometheus_stack_version = "65.1.0"
 
-  telegram_chat_id = "7067419664"
+  telegram_enabled = true
 }
