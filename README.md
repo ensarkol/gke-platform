@@ -42,12 +42,11 @@ flowchart TB
     ar -. "image pull" .-> app
 
     lb -- "Gateway + VirtualService" --> app
-    app -- "outbound" --> egress --> nat --> internet((Internet))
-    istiod -. "config + certs" .-> app
+    app -- "ServiceEntry hosts only" --> egress -- "TLS passthrough" --> nat --> internet((Internet))    istiod -. "config + certs" .-> app
 
-    prom -- "scrape" --> app
+    prom -- "scrape Envoy + /metrics" --> app
     keda -- "istio_requests_total" --> prom
-    keda -- "scale 0 or 3..5" --> app
+    keda -- "scale 0 or 3" --> app
     graf -- "PromQL" --> prom
     graf -- "PodRestartDetected" --> tg([Telegram])
     fb -- "container stdout" --> es
@@ -61,11 +60,12 @@ flowchart TB
 
 ### How the pieces fit together
 
-- **Networking.** Jenkins and GKE each have their own VPC. The Jenkins firewall allows SSH and port 8080 only from the addresses listed in `allowed_cidrs`. GKE nodes have no public IPs and reach the internet through Cloud NAT.
+- **Networking.** Jenkins and GKE each have their own VPC. The Jenkins firewall allows SSH and port 8080 only from the addresses listed in `allowed_cidrs`. Both GKE node pools use private nodes (`enable_private_nodes`), so nodes have only internal IPs and reach the internet through Cloud NAT in `test-vpc`. Google APIs and Artifact Registry are reached through Private Google Access on the subnet. The control plane keeps its public endpoint, so Jenkins and operators can still run `kubectl`.
 - **Node pools.** `main-pool` runs the platform components. `application-pool` has a `dedicated=application:NoSchedule` taint, so only the Node.js service, which tolerates the taint, is scheduled there. Required pod anti-affinity places each application pod on a different node.
-- **Traffic.** Requests reach the `istio-ingress` LoadBalancer and are routed to the service by an Istio `Gateway` and `VirtualService`. The gateway accepts only the `<ingress-ip>.nip.io` host. Requests to the bare IP get a 404, so internet scanners are not counted as traffic and don't keep the service awake. Outbound traffic from the mesh leaves through `istio-egress`.
-- **Scaling.** A KEDA `ScaledObject` reads `istio_requests_total` from Prometheus. The service runs 3 to 5 replicas while it receives traffic. After one hour without requests it scales to 0, and the next requests bring it back.
-- **Observability.** Prometheus scrapes istiod and every Envoy sidecar, and Grafana ships with the official Istio dashboards. The Grafana alert rule `PodRestartDetected` fires when any container restarts and notifies a Telegram chat. Filebeat runs on every node and sends container stdout to Elasticsearch, where Kibana exposes it through the `filebeat-*` data view.
+- **Traffic.** Requests reach the `istio-ingress` LoadBalancer and are routed to the service by an Istio `Gateway` and `VirtualService`. The gateway accepts only the `<ingress-ip>.nip.io` host. Requests to the bare IP get a 404, so internet scanners are not counted as traffic and don't keep the service awake.
+- **Egress.** A `Sidecar` resource puts the `apps` namespace in `REGISTRY_ONLY` mode, so the service can only reach destinations that are registered in the mesh. External hosts are allowed through a `ServiceEntry` (`istio.egress.hosts` in the chart, `api.github.com` by default). A `VirtualService` sends that traffic to `istio-egress`, which forwards it as TLS passthrough, and from there it leaves through Cloud NAT. Other namespaces keep the default `ALLOW_ANY` policy, because the viewer agent calls Google APIs directly.
+- **Scaling.** A KEDA `ScaledObject` reads `istio_requests_total` from Prometheus. The service runs exactly 3 replicas while it receives traffic (`minReplicaCount` and `maxReplicaCount` are both 3). After one hour without requests it scales to 0, the cluster autoscaler then drains `application-pool` down to 0 nodes, and the next requests bring both back.
+- **Observability.** Prometheus scrapes istiod and every Envoy sidecar, and a `PodMonitor` in the chart scrapes the service's own `/metrics` endpoint (`http_requests_total` and the Node.js runtime metrics). Grafana ships with the official Istio dashboards. The Grafana alert rule `PodRestartDetected` fires when any container restarts and notifies a Telegram chat. Filebeat runs on every node and sends container stdout to Elasticsearch, where Kibana exposes it through the `filebeat-*` data view.
 - **Viewer agent.** A FastAPI service that uses Gemini function calling to answer questions about the environment. Every tool it can call is read-only: GCP access goes through a Workload Identity service account with viewer roles, Kubernetes access through a get/list/watch ClusterRole that excludes secrets, and Grafana access through a Viewer token.
 - **Delivery.** Jenkins polls the repository and rebuilds the application whenever application code or its chart changes. Images are tagged with the commit SHA, so every commit rolls out a new version.
 
@@ -84,8 +84,8 @@ iac/
     jenkins-vpc/                 jenkins-vpc, jenkins-subnet 10.10.0.0/24, firewall 22/8080
     gke-vpc/                     test-vpc, test-subnet 10.20.0.0/20 with pods/services ranges
   cloud-nat/
-    gke-nat/                     Cloud Router and NAT for GKE egress
-  jenkins/                       Jenkins VM, service account, data disk, static IP
+    gke-nat/                     Cloud Router and NAT for the private GKE nodes
+  jenkins/                       Jenkins VM, service account, data disk, static IP, admin password secret
   iam/
     viewer-agent/                Agent service account, viewer roles, Workload Identity binding
   gke/                           test-gke with main-pool and application-pool
@@ -98,7 +98,7 @@ iac/
     agent/                       Viewer agent deployment
   modules/                       In-repo modules for the Kubernetes layer
 app/                             Express service exposing /metrics
-helm/nodejs-app/                 Deployment, Service, Gateway, VirtualService, ScaledObject
+helm/nodejs-app/                 Deployment, Service, Gateway, VirtualService, ScaledObject, PodMonitor, egress config
 jenkins/                         VM startup script and Jenkinsfiles
 agent/                           FastAPI + Gemini viewer agent
 ```
@@ -165,8 +165,12 @@ On first boot the VM installs Java, Docker, the Google Cloud CLI, kubectl, Helm,
 ```bash
 cd iac/jenkins
 terragrunt output -raw jenkins_url
-terragrunt output -raw jenkins_admin_password
+gcloud secrets versions access latest --secret=jenkins-admin-password
 ```
+
+The admin password is generated as an ephemeral value and written to Secret Manager as a write-only attribute, so it is not stored in instance metadata or in Terraform state. The Jenkins service account has `secretAccessor` on that one secret only. The startup script reads it with `gcloud secrets versions access` into a file that only the `jenkins` user can read, and Configuration as Code picks it up from there. The script runs without `xtrace`, so the value never reaches the serial console or Cloud Logging. Incrementing `admin_password_version` rotates the password.
+
+Authorization uses matrix auth: `admin` has `Overall/Administer`, other authenticated users can only read jobs, and anonymous users have no access.
 
 | Job | Purpose |
 |-----|---------|
@@ -184,7 +188,7 @@ gcloud container clusters get-credentials test-gke --zone europe-west1-b --proje
 kubectl get nodes -L cloud.google.com/gke-nodepool
 ```
 
-The output lists one `main-pool` node and three `application-pool` nodes. Both pools autoscale: `main-pool` from 1 to 3 nodes and `application-pool` from 3 to 5.
+The output lists one `main-pool` node and three `application-pool` nodes. Both pools autoscale: `main-pool` from 1 to 3 nodes and `application-pool` from 0 to 3, one node per application pod. When the service scales to 0, the cluster autoscaler also removes the idle `application-pool` nodes, and the first requests after that wait one to two minutes for new nodes.
 
 ### Istio, KEDA and the Prometheus stack
 
@@ -242,6 +246,20 @@ curl -s "http://${INGRESS_IP}.nip.io/"
 
 Three pods run on three different `application-pool` nodes. The public URL is also available as the `app_url` output of `iac/k8s/app`. A custom hostname can be set with the `app_host` input.
 
+The service's own metrics are scraped by the chart's `PodMonitor` and can be queried in Prometheus or Grafana Explore:
+
+```text
+sum by (path, status) (rate(http_requests_total{namespace="apps"}[5m]))
+```
+
+Egress can be checked from inside a pod. The registered host goes through `istio-egress`, while any other host is refused by the sidecar:
+
+```bash
+kubectl -n apps exec deploy/nodejs-app -c nodejs-app -- node -e "fetch('https://api.github.com').then(r => console.log(r.status))"
+kubectl -n apps exec deploy/nodejs-app -c nodejs-app -- node -e "fetch('https://example.com').then(r => console.log(r.status)).catch(e => console.log('blocked:', e.cause?.code))"
+kubectl -n istio-system logs deploy/istio-egress | tail -n 5
+```
+
 Rolling updates use `maxSurge: 0` and `maxUnavailable: 1`. With one pod per node, a surge pod would have no free node to run on, so pods are replaced one at a time instead. The service handles `SIGTERM` by draining open connections, so pods stop without waiting out the termination grace period.
 
 ### Scale to zero
@@ -254,7 +272,7 @@ sum(increase(istio_requests_total{reporter="source",destination_service_name="no
 
 | State | Replicas |
 |---|---|
-| Serving traffic | 3, rising to 5 above 100 requests per pod per hour |
+| Serving traffic | 3 |
 | No requests for one hour | 0 |
 | First hour after a deploy | 3 (`initialCooldownPeriod`) |
 
