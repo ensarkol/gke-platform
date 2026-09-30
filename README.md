@@ -1,47 +1,111 @@
 # GKE Platform
 
-Infrastructure-as-Code (Terragrunt + Terraform + Helm) ile GKE üzerinde örnek Node.js uygulaması, Istio, Prometheus/Grafana, KEDA, ELK ve viewer yetkili analiz agent'ı.
+A GKE-based platform defined entirely as code with Terragrunt, Terraform and Helm. It runs a sample Node.js service behind Istio, collects metrics with Prometheus and Grafana, scales the service to zero with KEDA when it is idle, ships container logs to ELK and includes a read-only AI agent that can answer questions about the environment. Jenkins, running on its own VM, builds and deploys everything.
 
-> Bu repo **kodu hazırlar**. `terragrunt apply` ve image push işlemlerini kendi GCP projenizde çalıştırmanız beklenir.
+## Architecture
 
-## Yapı
+```mermaid
+flowchart TB
+    dev([Developer]) -- "git push" --> gh[(GitHub)]
+    user([Client]) -- "HTTP ingress-ip.nip.io" --> lb
 
-Her kaynak kendi klasöründe, kendi `terragrunt.hcl`'i ve kendi state'i ile durur. Hangisini kurmak istiyorsan onun klasörüne girip `terragrunt apply` çalıştırırsın.
+    subgraph jvpc["jenkins-vpc"]
+        jenkins["Jenkins VM"]
+    end
+
+    subgraph gvpc["test-vpc · GKE test-gke"]
+        lb["istio-ingress<br/>LoadBalancer"]
+
+        subgraph appl["application-pool · tainted"]
+            app["nodejs-app × 3<br/>one pod per node<br/>+ Envoy sidecar"]
+        end
+
+        subgraph main["main-pool"]
+            istiod[istiod]
+            egress[istio-egress]
+            prom[Prometheus]
+            graf[Grafana]
+            keda[KEDA]
+            agent[Viewer agent]
+            es[Elasticsearch]
+            kb[Kibana]
+        end
+
+        fb["Filebeat DaemonSet<br/>all nodes"]
+        nat[Cloud NAT]
+    end
+
+    gh -- "SCM poll" --> jenkins
+    jenkins -- "docker push" --> ar[(Artifact Registry)]
+    jenkins -- "terragrunt apply" --> gcs[(GCS state)]
+    jenkins -- "helm deploy" --> app
+    ar -. "image pull" .-> app
+
+    lb -- "Gateway + VirtualService" --> app
+    app -- "outbound" --> egress --> nat --> internet((Internet))
+    istiod -. "config + certs" .-> app
+
+    prom -- "scrape" --> app
+    keda -- "istio_requests_total" --> prom
+    keda -- "scale 0 or 3..5" --> app
+    graf -- "PromQL" --> prom
+    graf -- "PodRestartDetected" --> tg([Telegram])
+    fb -- "container stdout" --> es
+    kb --> es
+
+    agent -- "read-only" --> gcp["GCP APIs"]
+    agent -- "read-only" --> k8s["Kubernetes API"]
+    agent -- "Viewer" --> graf
+    agent -- "function calling" --> gemini["Vertex AI Gemini"]
+```
+
+### How the pieces fit together
+
+- **Networking.** Jenkins and GKE each have their own VPC. The Jenkins firewall allows SSH and port 8080 only from the addresses listed in `allowed_cidrs`. GKE nodes have no public IPs and reach the internet through Cloud NAT.
+- **Node pools.** `main-pool` runs the platform components. `application-pool` has a `dedicated=application:NoSchedule` taint, so only the Node.js service, which tolerates the taint, is scheduled there. Required pod anti-affinity places each application pod on a different node.
+- **Traffic.** Requests reach the `istio-ingress` LoadBalancer and are routed to the service by an Istio `Gateway` and `VirtualService`. The gateway accepts only the `<ingress-ip>.nip.io` host. Requests to the bare IP get a 404, so internet scanners are not counted as traffic and don't keep the service awake. Outbound traffic from the mesh leaves through `istio-egress`.
+- **Scaling.** A KEDA `ScaledObject` reads `istio_requests_total` from Prometheus. The service runs 3 to 5 replicas while it receives traffic. After one hour without requests it scales to 0, and the next requests bring it back.
+- **Observability.** Prometheus scrapes istiod and every Envoy sidecar, and Grafana ships with the official Istio dashboards. The Grafana alert rule `PodRestartDetected` fires when any container restarts and notifies a Telegram chat. Filebeat runs on every node and sends container stdout to Elasticsearch, where Kibana exposes it through the `filebeat-*` data view.
+- **Viewer agent.** A FastAPI service that uses Gemini function calling to answer questions about the environment. Every tool it can call is read-only: GCP access goes through a Workload Identity service account with viewer roles, Kubernetes access through a get/list/watch ClusterRole that excludes secrets, and Grafana access through a Viewer token.
+- **Delivery.** Jenkins polls the repository and rebuilds the application whenever application code or its chart changes. Images are tagged with the commit SHA, so every commit rolls out a new version.
+
+## Repository layout
+
+Each resource lives in its own folder with its own `terragrunt.hcl` and its own remote state, so every part of the platform can be planned, applied or destroyed on its own.
 
 ```text
 iac/
-  common.hcl                     # project_id, region, zone, cluster_name, allowed_cidrs
-  root.hcl                       # GCS remote state + ortak input'lar
-  google-provider.hcl            # Registry modülleri için google/google-beta provider'ı üretir
-  apis/                          # Google API'leri
-  artifact-registry/             # Docker image repo'su (test)
+  common.hcl                     project_id, region, zone, cluster_name, allowed_cidrs
+  root.hcl                       GCS remote state and shared inputs
+  google-provider.hcl            google / google-beta provider for registry modules
+  apis/                          Google APIs
+  artifact-registry/             Docker repository
   vpc/
-    jenkins-vpc/                 # jenkins-vpc, jenkins-subnet 10.10.0.0/24, firewall 22/8080
-    gke-vpc/                     # test-vpc, test-subnet 10.20.0.0/20 (+pods/services)
+    jenkins-vpc/                 jenkins-vpc, jenkins-subnet 10.10.0.0/24, firewall 22/8080
+    gke-vpc/                     test-vpc, test-subnet 10.20.0.0/20 with pods/services ranges
   cloud-nat/
-    gke-nat/                     # test-vpc-router + test-vpc-nat (GKE node'larının internet çıkışı)
-  jenkins/                       # Jenkins VM + service account
+    gke-nat/                     Cloud Router and NAT for GKE egress
+  jenkins/                       Jenkins VM, service account, data disk, static IP
   iam/
-    viewer-agent/                # Agent GCP SA, viewer rolleri, Workload Identity binding
-  gke/                           # test-gke: main-pool + application-pool (autoscaling, taint)
+    viewer-agent/                Agent service account, viewer roles, Workload Identity binding
+  gke/                           test-gke with main-pool and application-pool
   k8s/
-    istio/                       # istiod, istio-ingress, istio-egress, apps namespace
-    prometheus-stack/            # kube-prometheus-stack, Istio scrape, Grafana pod restart alarmı
-    keda/                        # KEDA operator (ScaledObject CRD)
-    elk/                         # ECK: Elasticsearch, Kibana, Filebeat, data view
-    app/                         # helm/nodejs-app chart'ı (helm_release)
-    agent/                       # Viewer agent (Vertex AI Gemini)
-  modules/                       # Hazır karşılığı olmayan kendi modüllerimiz (apply edilmez)
-    jenkins/ istio/ prometheus-stack/ keda/ elk/ app/ agent/
-app/                             # Express + /metrics
-helm/nodejs-app/                 # Deployment, Gateway, VirtualService, ScaledObject
-jenkins/                         # startup.sh + Jenkinsfile'lar
-agent/                           # FastAPI + Gemini viewer agent
+    istio/                       istiod, istio-ingress, istio-egress, apps namespace
+    prometheus-stack/            kube-prometheus-stack, Istio scraping, Grafana alerting
+    keda/                        KEDA operator
+    elk/                         ECK operator, Elasticsearch, Kibana, Filebeat, data view
+    app/                         helm/nodejs-app release
+    agent/                       Viewer agent deployment
+  modules/                       In-repo modules for the Kubernetes layer
+app/                             Express service exposing /metrics
+helm/nodejs-app/                 Deployment, Service, Gateway, VirtualService, ScaledObject
+jenkins/                         VM startup script and Jenkinsfiles
+agent/                           FastAPI + Gemini viewer agent
 ```
 
-GCP kaynakları Google'ın resmi Terraform modülleriyle kurulur:
+GCP resources use the official Google Terraform modules:
 
-| Klasör | Modül |
+| Folder | Module |
 |---|---|
 | `apis/` | `terraform-google-modules/project-factory/google//modules/project_services` 18.3.0 |
 | `artifact-registry/` | `GoogleCloudPlatform/artifact-registry/google` 0.8.2 |
@@ -50,31 +114,37 @@ GCP kaynakları Google'ın resmi Terraform modülleriyle kurulur:
 | `gke/` | `terraform-google-modules/kubernetes-engine/google` 45.0.0 |
 | `iam/viewer-agent` | `terraform-google-modules/kubernetes-engine/google//modules/workload-identity` 45.0.0 |
 
-VPC adı, subnet CIDR'ları, secondary range'ler ve firewall kuralları doğrudan ilgili klasördeki `terragrunt.hcl` içinde görünür.
+Components that have no official module (Istio, the Prometheus stack, KEDA, ELK, the application and the agent) use the modules in `iac/modules/`, which are built on the Helm and Kubernetes providers.
 
-State: `gs://test-devops-case-tfstate/<unit-yolu>/default.tfstate` (örn. `vpc/gke-vpc`, `gke`, `k8s/istio`). Bucket yoksa Terragrunt ilk çalıştırmada oluşturmayı önerir.
+State is stored at `gs://<project_id>-tfstate/<unit-path>/default.tfstate`. Units read each other's outputs through Terragrunt `dependency` blocks, which also define the apply order:
 
-Bağımlılıklar (`dependency` blokları) Terragrunt tarafından çözülür. Örneğin `gke`, `vpc/gke-vpc`'nin network ve subnet output'larını okur.
-
-```text
-apis ─┬─ artifact-registry ─┐
-      ├─ vpc/jenkins-vpc ───┴─ jenkins
-      └─ vpc/gke-vpc ── cloud-nat/gke-nat ── gke ─┬─ k8s/istio ── k8s/prometheus-stack ─┬─ k8s/app
-                                                  │                     iam/viewer-agent ─┴─ k8s/agent
-                                                  ├─ k8s/keda ─────────────────────────── k8s/app
-                                                  └─ k8s/elk
+```mermaid
+flowchart LR
+    apis --> ar[artifact-registry]
+    apis --> jv[vpc/jenkins-vpc]
+    apis --> gv[vpc/gke-vpc]
+    ar --> jenkins
+    jv --> jenkins
+    gv --> nat[cloud-nat/gke-nat] --> gke
+    apis --> iam[iam/viewer-agent]
+    gke --> istio[k8s/istio] --> prom[k8s/prometheus-stack]
+    gke --> keda[k8s/keda]
+    gke --> elk[k8s/elk]
+    prom --> app[k8s/app]
+    keda --> app
+    prom --> agent[k8s/agent]
+    iam --> agent
 ```
 
-## Önkoşullar
+## Prerequisites
 
-- GCP projesi ve faturalandırma
-- Yerel araçlar: `gcloud`, `terraform` (>= 1.5), `terragrunt` (>= 0.80), `kubectl`, `helm`, `docker`
-- `gcloud auth login` ve `gcloud auth application-default login`
-- Farklı bir proje kullanacaksan `iac/common.hcl` içini güncelle
+- A GCP project with billing enabled. The project and region are set in `iac/common.hcl`.
+- `gcloud`, `terraform` >= 1.5, `terragrunt` >= 0.80, `kubectl`, `helm` and `docker`.
+- Credentials from `gcloud auth login` and `gcloud auth application-default login`.
 
-## Kurulum
+## Provisioning
 
-Tek tek (önerilen, her adımı görerek):
+Every unit is applied from its own folder:
 
 ```bash
 cd iac/apis                && terragrunt apply
@@ -86,16 +156,11 @@ cd ../../jenkins           && terragrunt apply
 cd ../gke                  && terragrunt apply
 ```
 
-Ya da hepsi bağımlılık sırasıyla:
-
-```bash
-cd iac
-terragrunt run --all apply
-```
-
-Bir klasörün altındakileri toplu kurmak için de aynı komut çalışır. Örneğin `cd iac/vpc && terragrunt run --all apply` iki VPC'yi birlikte kurar.
+`terragrunt run --all apply` from `iac/` or from any subfolder applies all the units below it in dependency order.
 
 ### Jenkins
+
+On first boot the VM installs Java, Docker, the Google Cloud CLI, kubectl, Helm, Terraform, Terragrunt and Jenkins, then creates the pipeline jobs with Job DSL. This takes about 5–10 minutes. `JENKINS_HOME` is on a separate persistent disk and the VM has a static IP, so recreating the VM keeps build history and the URL.
 
 ```bash
 cd iac/jenkins
@@ -103,127 +168,124 @@ terragrunt output -raw jenkins_url
 terragrunt output -raw jenkins_admin_password
 ```
 
-VM ilk açılışta (5-10 dk) docker, gcloud, kubectl, helm, terraform, terragrunt ve Jenkins'i kurar.
+| Job | Purpose |
+|-----|---------|
+| `01-gke-cluster` | Plan, apply or destroy `vpc/gke-vpc`, `cloud-nat/gke-nat` and `gke` |
+| `02-istio` | Plan, apply or destroy `k8s/istio` |
+| `03-nodejs-app` | Build and push the `nodejs-app` image, then deploy or destroy `k8s/app` |
+| `04-viewer-agent` | Build and push the `viewer-agent` image, then deploy or destroy `k8s/agent` |
 
-| Job | Ne yapar |
-|-----|----------|
-| `01-gke-cluster` | `iac/vpc/gke-vpc` + `iac/cloud-nat/gke-nat` + `iac/gke` plan / apply / destroy |
-| `02-istio` | `iac/k8s/istio` plan / apply / destroy |
-| `03-nodejs-app` | `nodejs-app` image build+push + `iac/k8s/app` (Helm) deploy / destroy |
-| `04-viewer-agent` | `viewer-agent` image build+push + `iac/k8s/agent` deploy / destroy (Grafana port-forward'u pipeline açar) |
+`03-nodejs-app` polls `main` every two minutes and runs automatically when anything under `app/`, `helm/`, `iac/k8s/app/`, `iac/modules/app/` or `jenkins/Jenkinsfile.app` changes. The infrastructure jobs are triggered manually. Jenkins has no IAM admin rights, so units that grant IAM roles (`jenkins`, `iam/viewer-agent`) are applied by an operator.
 
-Image tag'i boş bırakılırsa git commit SHA'sı kullanılır; her commit yeni bir tag üretir ve pod'lar yeni image'a geçer.
-
-`03-nodejs-app` main branch'i 2 dakikada bir poll eder; `app/`, `helm/`, `iac/k8s/app/`, `iac/modules/app/` veya `jenkins/Jenkinsfile.app` değişince varsayılan parametrelerle (deploy, SHA tag) kendiliğinden çalışır. Altyapı job'ları (`01`, `02`) bilinçli olarak manueldir.
-
-Pipeline'lar repo'yu `git_repo_url`'den çeker. Bunu `common.hcl` içine yazıp `jenkins` unit'ini tekrar apply et.
-
-### GKE doğrulama
+### GKE
 
 ```bash
 gcloud container clusters get-credentials test-gke --zone europe-west1-b --project test-devops-case
 kubectl get nodes -L cloud.google.com/gke-nodepool
 ```
 
-Beklenen: `main-pool` ve `application-pool` node'ları; application-pool üzerinde `dedicated=application:NoSchedule` taint.
+The output lists one `main-pool` node and three `application-pool` nodes. Both pools autoscale: `main-pool` from 1 to 3 nodes and `application-pool` from 3 to 5.
 
-### Istio
+### Istio, KEDA and the Prometheus stack
 
 ```bash
-cd iac/k8s/istio && terragrunt apply
-kubectl -n istio-system get pods,svc
+cd iac/k8s/istio            && terragrunt apply
+cd ../keda                  && terragrunt apply
+cd ../prometheus-stack      && terragrunt apply
 ```
 
-### KEDA
+Grafana and Prometheus are reachable through port-forwarding:
 
 ```bash
-cd iac/k8s/keda && terragrunt apply
-kubectl -n keda get pods
-```
-
-### Prometheus stack (Prometheus + Grafana alarm)
-
-```bash
-cd iac/k8s/prometheus-stack && terragrunt apply
-terragrunt output -raw grafana_admin_password
+cd iac/k8s/prometheus-stack && terragrunt output -raw grafana_admin_password
 kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
+kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090
 ```
 
-- Prometheus UI: `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090`
-- Istio metrik kontrolü: PromQL `istio_requests_total`
-- Grafana'da **PodRestartDetected** alarmı (unified alerting) tanımlıdır.
-
-Alarmı Telegram'a göndermek için bot token'ını secret olarak oluştur (git'e ve state'e girmez), `iac/k8s/prometheus-stack/terragrunt.hcl` içinde `telegram_chat_id`'yi doldurup apply et. `telegram_chat_id` boşsa contact point dummy webhook olarak kalır.
+Grafana's alerting configuration (contact point, notification policy and the `PodRestartDetected` rule) is provisioned from files. The rule fires when `kube_pod_container_status_restarts_total` increases within five minutes. Notifications go to Telegram when `telegram_chat_id` is set in `iac/k8s/prometheus-stack/terragrunt.hcl`. The bot token is kept out of git and out of Terraform state: Grafana reads it from a secret that is created separately.
 
 ```bash
 kubectl -n monitoring create secret generic grafana-telegram \
-  --from-literal=TELEGRAM_BOT_TOKEN='<botfather token>'
+  --from-literal=TELEGRAM_BOT_TOKEN='<bot token>'
 ```
 
-### Node.js uygulaması
+When `telegram_chat_id` is empty, the contact point falls back to a placeholder webhook.
 
-Jenkins'te `03-nodejs-app` job'unu `ACTION=deploy` ile çalıştır: image'ı build/push eder ve chart'ı kurar.
+### Node.js service
 
-Doğrulama:
+`03-nodejs-app` builds the image and installs the chart.
 
 ```bash
 kubectl -n apps get pods -o wide
-# 3 pod, her biri farklı application-pool node'unda
-
 INGRESS_IP=$(kubectl -n istio-system get svc istio-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 curl -s "http://${INGRESS_IP}.nip.io/"
 ```
 
-Gateway yalnızca `<ingress IP>.nip.io` host'unu kabul eder (`iac/k8s/app` → `app_url` output'u). Çıplak IP'ye gelen istekler 404 alır; böylece açık IP'leri tarayan botlar trafik sayılıp KEDA'nın sıfıra inmesini engellemez. Başka bir alan adı için `app_host` input'u verilebilir.
+Three pods run on three different `application-pool` nodes. The public URL is also available as the `app_url` output of `iac/k8s/app`. A custom hostname can be set with the `app_host` input.
 
-### KEDA scale-to-zero
+Rolling updates use `maxSurge: 0` and `maxUnavailable: 1`. With one pod per node, a surge pod would have no free node to run on, so pods are replaced one at a time instead. The service handles `SIGTERM` by draining open connections, so pods stop without waiting out the termination grace period.
 
-Uygulama chart'ındaki `ScaledObject`:
+### Scale to zero
 
-- Trafik varken: `minReplicaCount=3` … `maxReplicaCount=5`
-- 1 saat boyunca istek yoksa (`idleReplicaCount=0`): 0 pod
-- Trigger: Prometheus `sum(increase(istio_requests_total{reporter="source",destination_service_name="nodejs-app"}[1h]))`
+The `ScaledObject` in the chart uses this Prometheus query:
 
-**Bilinen kısıt:** Pod'lar 0 iken gelen ilk istek(ler) ayağa kalkana kadar 503 alabilir; ingress kaynaklı metrik yine de scale-up'ı tetikler.
+```text
+sum(increase(istio_requests_total{reporter="source",destination_service_name="nodejs-app"}[1h]))
+```
 
-### ELK (nice-to-have)
+| State | Replicas |
+|---|---|
+| Serving traffic | 3, rising to 5 above 100 requests per pod per hour |
+| No requests for one hour | 0 |
+| First hour after a deploy | 3 (`initialCooldownPeriod`) |
+
+While the service is at zero replicas, the first requests receive a 503 from the gateway. They are still recorded by the ingress metrics, and KEDA brings the replicas back within its polling interval.
+
+### ELK
 
 ```bash
 cd iac/k8s/elk && terragrunt apply
-
 kubectl -n elastic-system get elasticsearch,kibana,beat
-kubectl -n elastic-system get secret test-es-es-elastic-user \
-  -o go-template='{{.data.elastic | base64decode}}{{"\n"}}'
-kubectl -n elastic-system port-forward svc/test-kb-kb-http 5601
-# Kibana → Discover → filebeat-* data view
 ```
 
-### Viewer analiz agent'ı
+The ECK operator manages Elasticsearch, Kibana and Filebeat. Filebeat runs as a DaemonSet, reads `/var/log/containers/*.log` on every node and adds Kubernetes metadata to each event. A Kubernetes job created by the same unit adds the `filebeat-*` data view to Kibana.
 
-Önce agent'ın GCP service account'unu ve rollerini elle kur. Jenkins SA'sının IAM yetkisi yok; rol veremez:
+```bash
+kubectl -n elastic-system get secret test-es-es-elastic-user -o go-template='{{.data.elastic | base64decode}}{{"\n"}}'
+kubectl -n elastic-system port-forward svc/test-kb-kb-http 5601
+```
+
+Kibana is then available at `https://localhost:5601` with the user `elastic`.
+
+### Viewer agent
+
+The agent's GCP identity is created first, by an operator:
 
 ```bash
 cd iac/iam/viewer-agent && terragrunt apply
 ```
 
-Sonra Jenkins'te `04-viewer-agent` job'unu `ACTION=deploy` ile çalıştır. Pipeline image'ı build/push eder, Grafana'ya port-forward açar (agent Grafana'da viewer service account oluşturur) ve `iac/k8s/agent`'ı apply eder. Grafana şifresi `k8s/prometheus-stack` output'undan otomatik okunur.
+`04-viewer-agent` then builds the image and applies `iac/k8s/agent`. During the apply the pipeline opens a port-forward to Grafana, so that Terraform can create the agent's Grafana service account and token.
 
 ```bash
 kubectl -n agent port-forward svc/viewer-agent 8080:80
-# Tarayıcı: http://localhost:8080
 ```
 
-| Alan | Yetki |
-|------|--------|
-| GCP | `roles/viewer`, `logging.viewer`, `monitoring.viewer` + `aiplatform.user` (Workload Identity) |
-| Kubernetes | ClusterRole: get/list/watch (secrets yok) |
-| Grafana | Service account **Viewer** token |
+The chat UI is served at `http://localhost:8080`.
 
-Model `gemini-3.5-flash`, Vertex AI `global` endpoint'inden çağrılır. Gemini 3.x `europe-west1`'de sunulmuyor. Değiştirmek için `iac/k8s/agent/terragrunt.hcl` içindeki `gemini_model` / `gemini_location` alanlarını düzenle.
+| Scope | Access |
+|------|--------|
+| GCP | `roles/viewer`, `roles/logging.viewer`, `roles/monitoring.viewer`, `roles/aiplatform.user` through Workload Identity |
+| Kubernetes | ClusterRole with get/list/watch, no access to secrets |
+| Grafana | Service account with the Viewer role |
+
+The agent calls `gemini-3.5-flash` through the Vertex AI `global` endpoint, because Gemini 3.x models are not served in `europe-west1`. The model and location are set by the `gemini_model` and `gemini_location` inputs in `iac/k8s/agent/terragrunt.hcl`. Requests that would change something, such as deleting a deployment, are refused.
 
 ## Teardown
 
 ```bash
 cd iac
-terragrunt run --all destroy     # bağımlılıkların tersi sırasıyla siler
+terragrunt run --all destroy
 ```
+
+Units are destroyed in reverse dependency order.
