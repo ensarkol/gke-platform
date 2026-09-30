@@ -56,7 +56,9 @@ keda:
     serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc:9090
     metricName: istio_requests_total
     query: sum(increase(istio_requests_total{reporter="source",destination_service_name="nodejs-app"}[1h]))
-    threshold: "1"
+    # Requests per pod over the last hour; above min replicas only under real load
+    threshold: "100"
+    # Any request in the last hour keeps the app awake; zero means idle
     activationThreshold: "0"
 
 serviceAccount:
