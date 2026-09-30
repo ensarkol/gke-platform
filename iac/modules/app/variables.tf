@@ -33,6 +33,12 @@ variable "chart_path" {
   type        = string
 }
 
+variable "app_host" {
+  description = "Host name the Gateway accepts; empty = <ingress IP>.nip.io"
+  type        = string
+  default     = ""
+}
+
 variable "image_tag" {
   type    = string
   default = "latest"

@@ -35,13 +35,13 @@ inputs = {
   ingress_rules = [
     {
       name          = "jenkins-allow-ssh"
-      source_ranges = [local.common.allowed_cidr]
+      source_ranges = local.common.allowed_cidrs
       target_tags   = ["jenkins"]
       allow         = [{ protocol = "tcp", ports = ["22"] }]
     },
     {
       name          = "jenkins-allow-ui"
-      source_ranges = [local.common.allowed_cidr]
+      source_ranges = local.common.allowed_cidrs
       target_tags   = ["jenkins"]
       allow         = [{ protocol = "tcp", ports = ["8080"] }]
     },

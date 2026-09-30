@@ -10,7 +10,7 @@ Her kaynak kendi klasöründe, kendi `terragrunt.hcl`'i ve kendi state'i ile dur
 
 ```text
 iac/
-  common.hcl                     # project_id, region, zone, cluster_name, allowed_cidr
+  common.hcl                     # project_id, region, zone, cluster_name, allowed_cidrs
   root.hcl                       # GCS remote state + ortak input'lar
   google-provider.hcl            # Registry modülleri için google/google-beta provider'ı üretir
   apis/                          # Google API'leri
@@ -161,8 +161,10 @@ kubectl -n apps get pods -o wide
 # 3 pod, her biri farklı application-pool node'unda
 
 INGRESS_IP=$(kubectl -n istio-system get svc istio-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-curl -s "http://${INGRESS_IP}/"
+curl -s "http://${INGRESS_IP}.nip.io/"
 ```
+
+Gateway yalnızca `<ingress IP>.nip.io` host'unu kabul eder (`iac/k8s/app` → `app_url` output'u). Çıplak IP'ye gelen istekler 404 alır; böylece açık IP'leri tarayan botlar trafik sayılıp KEDA'nın sıfıra inmesini engellemez. Başka bir alan adı için `app_host` input'u verilebilir.
 
 ### KEDA scale-to-zero
 
