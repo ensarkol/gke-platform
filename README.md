@@ -202,6 +202,17 @@ kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
 kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090
 ```
 
+The official Istio dashboards from grafana.com are installed in the `istio` folder. The ones most relevant to the Node.js service are:
+
+| Dashboard | What it shows | Filters |
+|---|---|---|
+| Istio Service Dashboard | Request rate, success rate, latency percentiles and request size for a service, broken down by client | Service `nodejs-app.apps.svc.cluster.local` |
+| Istio Workload Dashboard | The same metrics seen from the pods, including inbound and outbound traffic | Namespace `apps`, workload `nodejs-app` |
+| Istio Mesh Dashboard | Global request volume and success rate, with one row per service in the mesh | – |
+| Istio Control Plane Dashboard | istiod resource usage, xDS pushes and sidecar injection | – |
+
+The kube-prometheus-stack dashboards cover the pods themselves. For example, **Kubernetes / Compute Resources / Namespace (Pods)** with namespace `apps` shows CPU and memory per replica, which makes the scale-to-zero cycle visible.
+
 Grafana's alerting configuration (contact point, notification policy and the `PodRestartDetected` rule) is provisioned from files. The rule fires when `kube_pod_container_status_restarts_total` increases within five minutes. Notifications go to Telegram when `telegram_chat_id` is set in `iac/k8s/prometheus-stack/terragrunt.hcl`. The bot token is kept out of git and out of Terraform state: Grafana reads it from a secret that is created separately.
 
 ```bash
@@ -210,6 +221,14 @@ kubectl -n monitoring create secret generic grafana-telegram \
 ```
 
 When `telegram_chat_id` is empty, the contact point falls back to a placeholder webhook.
+
+The alert can be exercised with a pod that exits every 20 seconds. The alert fires within a few minutes. Deleting the pod resolves it:
+
+```bash
+kubectl run restart-test --image=busybox --restart=Always -- sh -c 'sleep 20; exit 1'
+kubectl get pod restart-test -w
+kubectl delete pod restart-test
+```
 
 ### Node.js service
 
@@ -240,6 +259,20 @@ sum(increase(istio_requests_total{reporter="source",destination_service_name="no
 | First hour after a deploy | 3 (`initialCooldownPeriod`) |
 
 While the service is at zero replicas, the first requests receive a 503 from the gateway. They are still recorded by the ingress metrics, and KEDA brings the replicas back within its polling interval.
+
+A steady stream of requests wakes the service and keeps it running:
+
+```bash
+INGRESS_IP=$(kubectl -n istio-system get svc istio-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+while true; do curl -s -o /dev/null -w "%{http_code}\n" "http://${INGRESS_IP}.nip.io/"; sleep 5; done
+```
+
+The loop prints 503 until the pods are ready and 200 afterwards. The scaling can be followed from another terminal:
+
+```bash
+kubectl -n apps get pods -w
+kubectl -n apps get scaledobject,hpa
+```
 
 ### ELK
 
