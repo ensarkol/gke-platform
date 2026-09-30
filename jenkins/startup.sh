@@ -1,5 +1,4 @@
 #!/bin/bash
-# Reads config from GCE instance metadata attributes.
 set -euxo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
@@ -19,7 +18,6 @@ apt-get update
 apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release \
   software-properties-common unzip git jq python3
 
-# ---- Persistent JENKINS_HOME (survives VM replacement) ----
 HOME_DISK=/dev/disk/by-id/google-jenkins-home
 for _ in $(seq 1 30); do [ -e "$HOME_DISK" ] && break; sleep 2; done
 blkid "$HOME_DISK" >/dev/null || mkfs.ext4 -m 0 -F "$HOME_DISK"
@@ -30,14 +28,12 @@ mountpoint -q /var/lib/jenkins || mount /var/lib/jenkins
 install -m 0755 -d /etc/apt/keyrings
 . /etc/os-release
 
-# ---- Java 21 (current Jenkins LTS no longer runs on Debian 12's Java 17) ----
 curl -fsSL https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --batch --yes --dearmor -o /etc/apt/keyrings/adoptium.gpg
 echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb ${VERSION_CODENAME} main" \
   > /etc/apt/sources.list.d/adoptium.list
 apt-get update
 apt-get install -y temurin-21-jdk
 
-# ---- Docker ----
 curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
 chmod a+r /etc/apt/keyrings/docker.gpg
 . /etc/os-release
@@ -46,17 +42,14 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
 apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
 
-# ---- gcloud / kubectl ----
 curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --batch --yes --dearmor -o /usr/share/keyrings/cloud.google.gpg
 echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
   > /etc/apt/sources.list.d/google-cloud-sdk.list
 apt-get update
 apt-get install -y google-cloud-cli google-cloud-cli-gke-gcloud-auth-plugin kubectl
 
-# ---- Helm ----
 curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
-# ---- Terraform ----
 curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --batch --yes --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
 . /etc/os-release
 echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com ${VERSION_CODENAME} main" \
@@ -64,13 +57,11 @@ echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://
 apt-get update
 apt-get install -y terraform
 
-# ---- Terragrunt ----
 TERRAGRUNT_VERSION="v0.80.2"
 curl -fsSL -o /usr/local/bin/terragrunt \
   "https://github.com/gruntwork-io/terragrunt/releases/download/${TERRAGRUNT_VERSION}/terragrunt_linux_amd64"
 chmod +x /usr/local/bin/terragrunt
 
-# ---- Jenkins ----
 curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key | tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
 echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" \
   > /etc/apt/sources.list.d/jenkins.list
@@ -81,7 +72,6 @@ systemctl stop jenkins || true
 
 mkdir -p /var/lib/jenkins/casc_configs /opt/test
 
-# The systemd unit ignores /etc/default/jenkins, so env goes into a drop-in
 mkdir -p /etc/systemd/system/jenkins.service.d
 cat > /etc/systemd/system/jenkins.service.d/override.conf <<EOF
 [Service]

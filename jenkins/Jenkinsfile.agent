@@ -34,7 +34,6 @@ pipeline {
       }
     }
 
-    // The grafana provider in iac/k8s/agent talks to Grafana on localhost:3000
     stage('Deploy') {
       when { expression { params.ACTION == 'deploy' || params.ACTION == 'destroy' } }
       steps {

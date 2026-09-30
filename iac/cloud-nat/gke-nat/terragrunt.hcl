@@ -23,8 +23,6 @@ dependency "vpc" {
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
 }
 
-
-# GKE node'ları internete (image pull vb.) NAT üzerinden çıkar
 inputs = {
   name    = "test-vpc-router"
   network = dependency.vpc.outputs.network_name

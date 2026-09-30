@@ -1,5 +1,3 @@
-"""Viewer-scoped analysis agent with Vertex AI Gemini function calling."""
-
 from __future__ import annotations
 
 import json
@@ -46,7 +44,6 @@ def _client() -> genai.Client:
         vertexai=True,
         project=settings.project_id,
         location=settings.gemini_location,
-        # Vertex shared quota returns bursty 429s; the SDK does not retry unless told to
         http_options=types.HttpOptions(
             retry_options=types.HttpRetryOptions(attempts=5, initial_delay=2, max_delay=30)
         ),
@@ -118,7 +115,6 @@ def chat(req: ChatRequest):
             )
         contents.append(types.Content(role="user", parts=tool_response_parts))
 
-    # Gemini 3.x ignores function_calling_config mode=NONE, so the final turn drops the tools entirely
     contents.append(
         types.Content(
             role="user",

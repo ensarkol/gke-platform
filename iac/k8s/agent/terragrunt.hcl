@@ -38,13 +38,12 @@ dependency "prometheus_stack" {
 }
 
 inputs = {
-  cluster_name           = dependency.gke.outputs.name
-  artifact_registry_repo = local.common.artifact_registry_repo
-  image_tag              = get_env("IMAGE_TAG", "latest")
+  cluster_name              = dependency.gke.outputs.name
+  artifact_registry_repo    = local.common.artifact_registry_repo
+  image_tag                 = get_env("IMAGE_TAG", "latest")
   grafana_admin_password    = dependency.prometheus_stack.outputs.grafana_admin_password
   gcp_service_account_email = dependency.iam.outputs.gcp_service_account_email
 
-  # Apply sırasında: kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
   grafana_url     = "http://localhost:3000"
   gemini_model    = "gemini-3.5-flash"
   gemini_location = "global"

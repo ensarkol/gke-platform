@@ -28,7 +28,6 @@ dependencies {
   paths = ["../cloud-nat/gke-nat"]
 }
 
-
 inputs = {
   name     = local.common.cluster_name
   regional = false
@@ -61,7 +60,6 @@ inputs = {
   security_posture_mode               = "BASIC"
   security_posture_vulnerability_mode = "VULNERABILITY_MODE_UNSPECIFIED"
 
-  # Modülün node metadata'sına eklediği cluster_name/node_pool anahtarları node pool'u yeniden yaratır
   enable_default_node_pools_metadata = false
 
   node_pools = [

@@ -18,7 +18,6 @@ pipeline {
       steps {
         checkout scm
         script {
-          // A unique tag per commit; reusing "latest" with IfNotPresent would never roll out new code
           env.TAG = params.IMAGE_TAG?.trim() ?: sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
         }
       }
@@ -35,7 +34,6 @@ pipeline {
       }
     }
 
-    // helm/nodejs-app chart'ı terragrunt (helm_release) ile kurulur; IMAGE_TAG env'den okunur
     stage('Helm Deploy') {
       when { expression { params.ACTION == 'deploy' } }
       steps {

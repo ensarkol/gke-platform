@@ -24,8 +24,6 @@ resource "helm_release" "eck_operator" {
   ]
 }
 
-# Elasticsearch/Kibana/Beat CRs are rendered by the chart instead of kubernetes_manifest,
-# because the ECK CRDs don't exist yet when Terraform plans.
 resource "helm_release" "eck_stack" {
   name       = "eck-stack"
   repository = "https://helm.elastic.co"
@@ -119,9 +117,8 @@ resource "helm_release" "eck_stack" {
             spec = {
               serviceAccountName           = kubernetes_service_account.filebeat.metadata[0].name
               automountServiceAccountToken = true
-              # Node log files are root-owned
-              securityContext = { runAsUser = 0 }
-              tolerations     = [{ operator = "Exists" }]
+              securityContext              = { runAsUser = 0 }
+              tolerations                  = [{ operator = "Exists" }]
               containers = [{
                 name = "filebeat"
                 env = [{

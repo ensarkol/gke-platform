@@ -1,5 +1,3 @@
-"""Read-only tools for GCP, Kubernetes and Grafana."""
-
 from __future__ import annotations
 
 import json
@@ -205,13 +203,11 @@ def grafana_list_alerts() -> str:
 def grafana_promql(query: str) -> str:
     headers = {"Authorization": f"Bearer {settings.grafana_token}"}
     with httpx.Client(base_url=settings.grafana_url, headers=headers, timeout=30.0) as client:
-        # Use datasource proxy – assume prometheus datasource uid 'prometheus'
         r = client.get(
             "/api/datasources/proxy/uid/prometheus/api/v1/query",
             params={"query": query},
         )
         if r.status_code >= 400:
-            # fallback: list datasources and use numeric id
             ds = client.get("/api/datasources")
             ds.raise_for_status()
             prom = next((d for d in ds.json() if d.get("type") == "prometheus"), None)
@@ -359,8 +355,7 @@ def run_tool(name: str, args: dict[str, Any]) -> str:
     if not fn:
         return json.dumps({"error": f"unknown tool {name}"})
     try:
-        # Drop None values
         clean = {k: v for k, v in (args or {}).items() if v is not None}
         return fn(**clean)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return json.dumps({"error": str(exc)})

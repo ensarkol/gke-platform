@@ -4,8 +4,6 @@ locals {
 
 terraform_binary = "terraform"
 
-# Her unit'in state'i: gs://<project>-tfstate/<unit-path>/default.tfstate
-# Örn: vpc/gke-vpc, gke, k8s/istio
 remote_state {
   backend = "gcs"
   generate = {

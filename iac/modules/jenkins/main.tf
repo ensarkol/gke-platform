@@ -36,7 +36,6 @@ resource "random_password" "jenkins_admin" {
   special = false
 }
 
-# The VM is replaced whenever the startup script changes; JENKINS_HOME and the IP live outside it
 resource "google_compute_disk" "jenkins_home" {
   name = "jenkins-home"
   zone = var.zone

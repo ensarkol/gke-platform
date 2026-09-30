@@ -51,7 +51,6 @@ const server = app.listen(PORT, () => {
   console.log(`nodejs-app listening on port ${PORT}`);
 });
 
-// Node as PID 1 has no default SIGTERM handler, so without this every pod stop waits out the full grace period
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     console.log(`${signal} received, draining connections`);

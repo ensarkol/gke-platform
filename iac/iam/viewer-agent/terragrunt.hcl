@@ -10,9 +10,6 @@ locals {
   common = read_terragrunt_config(find_in_parent_folders("common.hcl")).locals
 }
 
-# GCP SA + project roles + Workload Identity binding for the viewer agent.
-# Applied by hand: the Jenkins SA deliberately has no IAM admin rights, so it cannot grant roles.
-# The k8s side (namespace, KSA, RBAC, deployment) lives in k8s/agent and is deployed by Jenkins.
 terraform {
   source = "tfr:///terraform-google-modules/kubernetes-engine/google//modules/workload-identity?version=45.0.0"
 }

@@ -3,7 +3,6 @@ locals {
     uid  = "pod-restart"
     type = "telegram"
     settings = {
-      # Grafana expands $VAR in provisioning files from the grafana-telegram secret
       bottoken = "$TELEGRAM_BOT_TOKEN"
       chatid   = var.telegram_chat_id
     }
@@ -51,12 +50,10 @@ resource "helm_release" "kube_prometheus_stack" {
             "cloud.google.com/gke-nodepool" = "main-pool"
           }
         }
-        # Chart creates these after its CRDs; kubernetes_manifest fails at plan time on a fresh cluster
         additionalServiceMonitors = [
           {
-            name     = "istiod"
-            selector = { matchLabels = { app = "istiod" } }
-            # Istio dashboards query go_* metrics by {app="istiod"}
+            name         = "istiod"
+            selector     = { matchLabels = { app = "istiod" } }
             targetLabels = ["app"]
             namespaceSelector = {
               matchNames = ["istio-system"]
@@ -116,12 +113,10 @@ resource "helm_release" "kube_prometheus_stack" {
           }
         }
         additionalDataSources = []
-        # Created by hand so the bot token stays out of git and Terraform state; optional until Telegram is set up
         envFromSecrets = [
           { name = "grafana-telegram", optional = true }
         ]
         alerting = {
-          # Keys become provisioning file names; Grafana skips files without a .yaml suffix
           "contactpoints.yaml" = {
             apiVersion = 1
             contactPoints = [
@@ -249,7 +244,6 @@ resource "helm_release" "kube_prometheus_stack" {
             ]
           }
         }
-        # Official Istio dashboards from grafana.com, downloaded by Grafana's init container
         dashboards = {
           istio = {
             for name, d in {
@@ -274,7 +268,6 @@ resource "helm_release" "kube_prometheus_stack" {
         }
       }
       prometheus-node-exporter = {
-        # Schedule on all nodes including tainted application-pool
         tolerations = [
           {
             operator = "Exists"

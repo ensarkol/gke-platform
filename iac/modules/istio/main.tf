@@ -1,6 +1,5 @@
 resource "kubernetes_namespace" "istio_system" {
   metadata {
-    # No istio-injection label: gateway pods use image "auto" and need the injector to fill it in
     name = "istio-system"
   }
 }
@@ -63,7 +62,6 @@ resource "helm_release" "istio_ingress" {
       labels = {
         istio = "ingress"
       }
-      # Prefer main-pool (no taint)
       nodeSelector = {
         "cloud.google.com/gke-nodepool" = "main-pool"
       }

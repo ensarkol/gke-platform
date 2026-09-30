@@ -69,7 +69,6 @@ resource "kubernetes_cluster_role_binding" "agent_viewer" {
   }
 }
 
-# Grafana viewer service account + token
 resource "grafana_service_account" "agent" {
   name        = "viewer-agent"
   role        = "Viewer"

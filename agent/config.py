@@ -14,7 +14,6 @@ class Settings(BaseSettings):
     zone: str = Field(default="europe-west1-b", validation_alias="ZONE")
     cluster_name: str = Field(default="test-gke", validation_alias="CLUSTER_NAME")
     gemini_model: str = Field(default="gemini-3.5-flash", validation_alias="GEMINI_MODEL")
-    # Gemini 3.x is only served from the global / multi-region endpoints, not europe-west1
     gemini_location: str = Field(default="global", validation_alias="GEMINI_LOCATION")
     grafana_url: str = Field(
         default="http://kube-prometheus-stack-grafana.monitoring.svc",

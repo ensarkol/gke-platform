@@ -1,4 +1,3 @@
-# Registry modülleri provider bloğu içermez; bu dosyayı include eden unit'lere provider.tf üretilir.
 locals {
   common = read_terragrunt_config(find_in_parent_folders("common.hcl")).locals
 }

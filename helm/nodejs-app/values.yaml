@@ -5,8 +5,6 @@ image:
   tag: latest
   pullPolicy: IfNotPresent
 
-# One pod per node (required anti-affinity): a surge pod has no free node and waits for the autoscaler,
-# so replace pods in place one at a time instead
 strategy:
   type: RollingUpdate
   rollingUpdate:
@@ -57,16 +55,13 @@ keda:
   minReplicaCount: 3
   maxReplicaCount: 5
   idleReplicaCount: 0
-  # The 1h query window has no history right after a deploy; without this the app would idle immediately
   initialCooldownPeriod: 3600
   cooldownPeriod: 300
   prometheus:
     serverAddress: http://kube-prometheus-stack-prometheus.monitoring.svc:9090
     metricName: istio_requests_total
     query: sum(increase(istio_requests_total{reporter="source",destination_service_name="nodejs-app"}[1h]))
-    # Requests per pod over the last hour; above min replicas only under real load
     threshold: "100"
-    # Any request in the last hour keeps the app awake; zero means idle
     activationThreshold: "0"
 
 serviceAccount:
