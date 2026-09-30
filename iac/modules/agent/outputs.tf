@@ -3,7 +3,7 @@ output "agent_namespace" {
 }
 
 output "agent_service_account" {
-  value = google_service_account.agent.email
+  value = var.gcp_service_account_email
 }
 
 output "agent_image" {

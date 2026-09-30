@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel, Field
 
@@ -19,6 +20,7 @@ from tools import TOOL_DECLARATIONS, run_tool
 SYSTEM_PROMPT = """You are a read-only SRE/DevOps analysis assistant for a Google Cloud + GKE environment.
 You have viewer-level access to GCP, Kubernetes (no secrets), and Grafana.
 Use tools to gather facts before answering. Never invent metrics or cluster state.
+Call independent tools in parallel in a single turn, and stop calling tools as soon as you can answer.
 If something is outside your permissions (writes, secrets, destructive actions), refuse politely.
 Respond clearly in the user's language (Turkish or English).
 """
@@ -43,7 +45,11 @@ def _client() -> genai.Client:
     return genai.Client(
         vertexai=True,
         project=settings.project_id,
-        location=settings.region,
+        location=settings.gemini_location,
+        # Vertex shared quota returns bursty 429s; the SDK does not retry unless told to
+        http_options=types.HttpOptions(
+            retry_options=types.HttpRetryOptions(attempts=5, initial_delay=2, max_delay=30)
+        ),
     )
 
 
@@ -86,36 +92,15 @@ def chat(req: ChatRequest):
     contents.append(types.Content(role="user", parts=[types.Part(text=req.message)]))
 
     tool_trace: list[dict[str, Any]] = []
-    max_rounds = 6
-    reply_text = ""
+    max_rounds = 8
 
     for _ in range(max_rounds):
-        response = client.models.generate_content(
-            model=settings.gemini_model,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                tools=_tool_config(),
-                temperature=0.2,
-            ),
-        )
-
-        candidate = response.candidates[0] if response.candidates else None
-        if not candidate or not candidate.content or not candidate.content.parts:
-            reply_text = "Model returned an empty response."
-            break
-
+        candidate = _generate(client, contents, with_tools=True)
         function_calls = [p for p in candidate.content.parts if p.function_call]
-        text_parts = [p.text for p in candidate.content.parts if p.text]
-
         if not function_calls:
-            reply_text = "\n".join(text_parts) if text_parts else str(response.text or "")
-            break
+            return ChatResponse(reply=_text(candidate), tool_calls=tool_trace)
 
-        # Append model turn
         contents.append(candidate.content)
-
-        # Execute tools and append responses
         tool_response_parts = []
         for part in function_calls:
             fc = part.function_call
@@ -125,16 +110,47 @@ def chat(req: ChatRequest):
             tool_response_parts.append(
                 types.Part(
                     function_response=types.FunctionResponse(
+                        id=fc.id,
                         name=fc.name,
                         response={"result": result},
                     )
                 )
             )
         contents.append(types.Content(role="user", parts=tool_response_parts))
-    else:
-        reply_text = reply_text or "Reached tool-call limit without a final answer."
 
-    return ChatResponse(reply=reply_text, tool_calls=tool_trace)
+    # Gemini 3.x ignores function_calling_config mode=NONE, so the final turn drops the tools entirely
+    contents.append(
+        types.Content(
+            role="user",
+            parts=[types.Part(text="Tool budget reached. Answer now using only the data gathered above.")],
+        )
+    )
+    candidate = _generate(client, contents, with_tools=False)
+    return ChatResponse(reply=_text(candidate), tool_calls=tool_trace)
+
+
+def _generate(client: genai.Client, contents: list[types.Content], with_tools: bool) -> types.Candidate:
+    try:
+        response = client.models.generate_content(
+            model=settings.gemini_model,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                tools=_tool_config() if with_tools else None,
+                temperature=0.2,
+            ),
+        )
+    except genai_errors.APIError as e:
+        raise HTTPException(503, f"Gemini error {e.code}: {e.message}") from e
+
+    candidate = response.candidates[0] if response.candidates else None
+    if not candidate or not candidate.content or not candidate.content.parts:
+        raise HTTPException(502, "Model returned an empty response.")
+    return candidate
+
+
+def _text(candidate: types.Candidate) -> str:
+    return "\n".join(p.text for p in candidate.content.parts if p.text and not p.thought)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,8 @@ iac/
   cloud-nat/
     gke-nat/                     # test-vpc-router + test-vpc-nat (GKE node'larının internet çıkışı)
   jenkins/                       # Jenkins VM + service account
+  iam/
+    viewer-agent/                # Agent GCP SA, viewer rolleri, Workload Identity binding
   gke/                           # test-gke: main-pool + application-pool (autoscaling, taint)
   k8s/
     istio/                       # istiod, istio-ingress, istio-egress, apps namespace
@@ -46,6 +48,7 @@ GCP kaynakları Google'ın resmi Terraform modülleriyle kurulur:
 | `vpc/*` | `terraform-google-modules/network/google` 18.3.0 |
 | `cloud-nat/gke-nat` | `terraform-google-modules/cloud-router/google` 9.1.0 |
 | `gke/` | `terraform-google-modules/kubernetes-engine/google` 45.0.0 |
+| `iam/viewer-agent` | `terraform-google-modules/kubernetes-engine/google//modules/workload-identity` 45.0.0 |
 
 VPC adı, subnet CIDR'ları, secondary range'ler ve firewall kuralları doğrudan ilgili klasördeki `terragrunt.hcl` içinde görünür.
 
@@ -57,7 +60,7 @@ Bağımlılıklar (`dependency` blokları) Terragrunt tarafından çözülür. �
 apis ─┬─ artifact-registry ─┐
       ├─ vpc/jenkins-vpc ───┴─ jenkins
       └─ vpc/gke-vpc ── cloud-nat/gke-nat ── gke ─┬─ k8s/istio ── k8s/prometheus-stack ─┬─ k8s/app
-                                                  │                                     └─ k8s/agent
+                                                  │                     iam/viewer-agent ─┴─ k8s/agent
                                                   ├─ k8s/keda ─────────────────────────── k8s/app
                                                   └─ k8s/elk
 ```
@@ -190,7 +193,13 @@ kubectl -n elastic-system port-forward svc/test-kb-kb-http 5601
 
 ### Viewer analiz agent'ı
 
-Jenkins'te `04-viewer-agent` job'unu `ACTION=deploy` ile çalıştır. Pipeline image'ı build/push eder, Grafana'ya port-forward açar (agent Grafana'da viewer service account oluşturur) ve `iac/k8s/agent`'ı apply eder. Grafana şifresi `k8s/prometheus-stack` output'undan otomatik okunur.
+Önce agent'ın GCP service account'unu ve rollerini elle kur. Jenkins SA'sının IAM yetkisi yok; rol veremez:
+
+```bash
+cd iac/iam/viewer-agent && terragrunt apply
+```
+
+Sonra Jenkins'te `04-viewer-agent` job'unu `ACTION=deploy` ile çalıştır. Pipeline image'ı build/push eder, Grafana'ya port-forward açar (agent Grafana'da viewer service account oluşturur) ve `iac/k8s/agent`'ı apply eder. Grafana şifresi `k8s/prometheus-stack` output'undan otomatik okunur.
 
 ```bash
 kubectl -n agent port-forward svc/viewer-agent 8080:80
@@ -199,9 +208,11 @@ kubectl -n agent port-forward svc/viewer-agent 8080:80
 
 | Alan | Yetki |
 |------|--------|
-| GCP | `roles/viewer` + `roles/aiplatform.user` (Workload Identity) |
+| GCP | `roles/viewer`, `logging.viewer`, `monitoring.viewer` + `aiplatform.user` (Workload Identity) |
 | Kubernetes | ClusterRole: get/list/watch (secrets yok) |
 | Grafana | Service account **Viewer** token |
+
+Model `gemini-3.5-flash`, Vertex AI `global` endpoint'inden çağrılır. Gemini 3.x `europe-west1`'de sunulmuyor. Değiştirmek için `iac/k8s/agent/terragrunt.hcl` içindeki `gemini_model` / `gemini_location` alanlarını düzenle.
 
 ## Teardown
 

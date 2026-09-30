@@ -1,21 +1,3 @@
-resource "google_service_account" "agent" {
-  account_id   = "viewer-agent"
-  display_name = "Viewer analysis agent"
-}
-
-resource "google_project_iam_member" "agent_roles" {
-  for_each = toset([
-    "roles/viewer",
-    "roles/aiplatform.user",
-    "roles/logging.viewer",
-    "roles/monitoring.viewer",
-  ])
-
-  project = var.project_id
-  role    = each.value
-  member  = "serviceAccount:${google_service_account.agent.email}"
-}
-
 resource "kubernetes_namespace" "agent" {
   metadata {
     name = "agent"
@@ -30,15 +12,9 @@ resource "kubernetes_service_account" "agent" {
     name      = "viewer-agent"
     namespace = kubernetes_namespace.agent.metadata[0].name
     annotations = {
-      "iam.gke.io/gcp-service-account" = google_service_account.agent.email
+      "iam.gke.io/gcp-service-account" = var.gcp_service_account_email
     }
   }
-}
-
-resource "google_service_account_iam_member" "workload_identity" {
-  service_account_id = google_service_account.agent.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[${kubernetes_namespace.agent.metadata[0].name}/${kubernetes_service_account.agent.metadata[0].name}]"
 }
 
 resource "kubernetes_cluster_role" "agent_viewer" {
@@ -177,6 +153,10 @@ resource "kubernetes_deployment" "agent" {
             value = var.gemini_model
           }
           env {
+            name  = "GEMINI_LOCATION"
+            value = var.gemini_location
+          }
+          env {
             name  = "GRAFANA_URL"
             value = "http://kube-prometheus-stack-grafana.monitoring.svc"
           }
@@ -218,10 +198,7 @@ resource "kubernetes_deployment" "agent" {
     }
   }
 
-  depends_on = [
-    google_service_account_iam_member.workload_identity,
-    kubernetes_secret.grafana_token,
-  ]
+  depends_on = [kubernetes_secret.grafana_token]
 }
 
 resource "kubernetes_service" "agent" {
