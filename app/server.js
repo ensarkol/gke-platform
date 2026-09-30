@@ -47,6 +47,15 @@ app.get('/metrics', async (req, res) => {
   res.end(await register.metrics());
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`nodejs-app listening on port ${PORT}`);
 });
+
+// Node as PID 1 has no default SIGTERM handler, so without this every pod stop waits out the full grace period
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    console.log(`${signal} received, draining connections`);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 10000).unref();
+  });
+}

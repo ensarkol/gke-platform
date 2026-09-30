@@ -5,6 +5,14 @@ image:
   tag: latest
   pullPolicy: IfNotPresent
 
+# One pod per node (required anti-affinity): a surge pod has no free node and waits for the autoscaler,
+# so replace pods in place one at a time instead
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
 nameOverride: ""
 fullnameOverride: "nodejs-app"
 
