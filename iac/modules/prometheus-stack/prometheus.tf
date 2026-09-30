@@ -97,8 +97,8 @@ resource "helm_release" "kube_prometheus_stack" {
         }
         additionalDataSources = []
         alerting = {
-          contactpoints = {
-            yaml = <<-EOT
+          # Keys become provisioning file names; Grafana skips files without a .yaml suffix
+          "contactpoints.yaml" = yamldecode(<<-EOT
               apiVersion: 1
               contactPoints:
                 - orgId: 1
@@ -110,9 +110,8 @@ resource "helm_release" "kube_prometheus_stack" {
                         url: ${var.alert_webhook_url}
                       disableResolveMessage: false
             EOT
-          }
-          policies = {
-            yaml = <<-EOT
+          )
+          "policies.yaml" = yamldecode(<<-EOT
               apiVersion: 1
               policies:
                 - orgId: 1
@@ -125,9 +124,8 @@ resource "helm_release" "kube_prometheus_stack" {
                       object_matchers:
                         - ["alertname", "=", "PodRestartDetected"]
             EOT
-          }
-          rules = {
-            yaml = <<-EOT
+          )
+          "rules.yaml" = yamldecode(<<-EOT
               apiVersion: 1
               groups:
                 - orgId: 1
@@ -210,7 +208,7 @@ resource "helm_release" "kube_prometheus_stack" {
                         severity: warning
                       isPaused: false
             EOT
-          }
+          )
         }
         dashboardProviders = {
           "dashboardproviders.yaml" = {
