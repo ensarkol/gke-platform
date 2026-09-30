@@ -22,6 +22,7 @@ inputs = {
     "logging.googleapis.com",
     "monitoring.googleapis.com",
     "aiplatform.googleapis.com",
+    "secretmanager.googleapis.com",
     "storage.googleapis.com",
   ]
 

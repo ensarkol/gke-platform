@@ -4,11 +4,11 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = "~> 5.40"
+      version = "~> 7.0"
     }
     random = {
       source  = "hashicorp/random"
-      version = "~> 3.6"
+      version = "~> 3.7"
     }
   }
 }
@@ -31,9 +31,29 @@ resource "google_project_iam_member" "jenkins_roles" {
   member  = "serviceAccount:${google_service_account.jenkins.email}"
 }
 
-resource "random_password" "jenkins_admin" {
+ephemeral "random_password" "jenkins_admin" {
   length  = 24
   special = false
+}
+
+resource "google_secret_manager_secret" "jenkins_admin_password" {
+  secret_id = "jenkins-admin-password"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "jenkins_admin_password" {
+  secret                 = google_secret_manager_secret.jenkins_admin_password.id
+  secret_data_wo         = ephemeral.random_password.jenkins_admin.result
+  secret_data_wo_version = var.admin_password_version
+}
+
+resource "google_secret_manager_secret_iam_member" "jenkins_admin_password" {
+  secret_id = google_secret_manager_secret.jenkins_admin_password.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.jenkins.email}"
 }
 
 resource "google_compute_disk" "jenkins_home" {
@@ -85,12 +105,16 @@ resource "google_compute_instance" "jenkins" {
     region                 = var.region
     artifact-registry-repo = var.artifact_registry_repo
     git-repo-url           = var.git_repo_url
-    jenkins-admin-password = random_password.jenkins_admin.result
+    admin-password-secret  = google_secret_manager_secret.jenkins_admin_password.secret_id
   }
 
   metadata_startup_script = var.startup_script
 
   allow_stopping_for_update = true
 
-  depends_on = [google_project_iam_member.jenkins_roles]
+  depends_on = [
+    google_project_iam_member.jenkins_roles,
+    google_secret_manager_secret_version.jenkins_admin_password,
+    google_secret_manager_secret_iam_member.jenkins_admin_password,
+  ]
 }

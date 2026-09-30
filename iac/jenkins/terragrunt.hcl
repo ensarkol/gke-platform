@@ -10,6 +10,10 @@ terraform {
   source = "${get_parent_terragrunt_dir()}/modules//jenkins"
 }
 
+dependencies {
+  paths = ["../apis"]
+}
+
 dependency "vpc" {
   config_path = "../vpc/jenkins-vpc"
 

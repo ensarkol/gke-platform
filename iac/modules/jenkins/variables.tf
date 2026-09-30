@@ -46,6 +46,12 @@ variable "git_repo_url" {
   default     = ""
 }
 
+variable "admin_password_version" {
+  description = "Increment to generate and store a new Jenkins admin password"
+  type        = number
+  default     = 1
+}
+
 variable "startup_script" {
   description = "Content of the VM startup script"
   type        = string

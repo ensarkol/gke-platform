@@ -6,9 +6,8 @@ output "jenkins_url" {
   value = "http://${google_compute_address.jenkins.address}:8080"
 }
 
-output "jenkins_admin_password" {
-  value     = random_password.jenkins_admin.result
-  sensitive = true
+output "admin_password_secret" {
+  value = google_secret_manager_secret.jenkins_admin_password.secret_id
 }
 
 output "jenkins_service_account" {

@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euxo pipefail
+set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 META="http://metadata.google.internal/computeMetadata/v1/instance/attributes"
@@ -9,10 +9,10 @@ PROJECT_ID=$(curl -sf "${H[@]}" "$META/project-id")
 REGION=$(curl -sf "${H[@]}" "$META/region")
 ARTIFACT_REGISTRY_REPO=$(curl -sf "${H[@]}" "$META/artifact-registry-repo")
 GIT_REPO_URL=$(curl -sf "${H[@]}" "$META/git-repo-url" || true)
-JENKINS_ADMIN_PASSWORD=$(curl -sf "${H[@]}" "$META/jenkins-admin-password")
+ADMIN_PASSWORD_SECRET=$(curl -sf "${H[@]}" "$META/admin-password-secret")
 EXTERNAL_IP=$(curl -sf "${H[@]}" "http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip")
 
-export PROJECT_ID REGION ARTIFACT_REGISTRY_REPO GIT_REPO_URL JENKINS_ADMIN_PASSWORD EXTERNAL_IP
+export PROJECT_ID REGION ARTIFACT_REGISTRY_REPO GIT_REPO_URL EXTERNAL_IP
 
 apt-get update
 apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release \
@@ -71,13 +71,23 @@ usermod -aG docker jenkins
 systemctl stop jenkins || true
 
 mkdir -p /var/lib/jenkins/casc_configs /opt/test
+install -d -m 0700 -o jenkins -g jenkins /var/lib/jenkins/casc_secrets
+
+for _ in $(seq 1 30); do
+  gcloud secrets versions access latest --secret="$ADMIN_PASSWORD_SECRET" --project="$PROJECT_ID" \
+    > /var/lib/jenkins/casc_secrets/JENKINS_ADMIN_PASSWORD 2>/dev/null && break
+  sleep 10
+done
+test -s /var/lib/jenkins/casc_secrets/JENKINS_ADMIN_PASSWORD
+chown jenkins:jenkins /var/lib/jenkins/casc_secrets/JENKINS_ADMIN_PASSWORD
+chmod 0400 /var/lib/jenkins/casc_secrets/JENKINS_ADMIN_PASSWORD
 
 mkdir -p /etc/systemd/system/jenkins.service.d
 cat > /etc/systemd/system/jenkins.service.d/override.conf <<EOF
 [Service]
 Environment="JAVA_OPTS=-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false"
 Environment="CASC_JENKINS_CONFIG=/var/lib/jenkins/casc_configs"
-Environment="JENKINS_ADMIN_PASSWORD=${JENKINS_ADMIN_PASSWORD}"
+Environment="SECRETS=/var/lib/jenkins/casc_secrets"
 Environment="PROJECT_ID=${PROJECT_ID}"
 Environment="REGION=${REGION}"
 Environment="ARTIFACT_REGISTRY_REPO=${ARTIFACT_REGISTRY_REPO}"
@@ -115,8 +125,17 @@ jenkins:
         - id: "admin"
           password: "${{JENKINS_ADMIN_PASSWORD}}"
   authorizationStrategy:
-    loggedInUsersCanDoAnything:
-      allowAnonymousRead: false
+    globalMatrix:
+      entries:
+        - user:
+            name: "admin"
+            permissions:
+              - "Overall/Administer"
+        - group:
+            name: "authenticated"
+            permissions:
+              - "Overall/Read"
+              - "Job/Read"
 
 unclassified:
   location:
@@ -240,6 +259,7 @@ mkdir -p /usr/share/jenkins/ref/plugins
 cat > /usr/share/jenkins/ref/plugins.txt <<'PLUGINS'
 configuration-as-code
 job-dsl
+matrix-auth
 workflow-aggregator
 git
 timestamper
