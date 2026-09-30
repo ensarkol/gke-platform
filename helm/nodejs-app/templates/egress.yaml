@@ -1,0 +1,90 @@
+{{- if and .Values.istio.enabled .Values.istio.egress.enabled }}
+{{- $name := printf "%s-egress" (include "nodejs-app.fullname" .) }}
+{{- $egressHost := printf "%s.%s.svc.cluster.local" .Values.istio.egress.service .Values.istio.egress.namespace }}
+apiVersion: networking.istio.io/v1
+kind: Sidecar
+metadata:
+  name: default
+  labels:
+    {{- include "nodejs-app.labels" . | nindent 4 }}
+spec:
+  outboundTrafficPolicy:
+    mode: REGISTRY_ONLY
+  egress:
+    - hosts:
+        - "./*"
+        - "{{ .Values.istio.egress.namespace }}/*"
+---
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "nodejs-app.labels" . | nindent 4 }}
+spec:
+  hosts:
+    {{- toYaml .Values.istio.egress.hosts | nindent 4 }}
+  ports:
+    - number: 443
+      name: tls
+      protocol: TLS
+  resolution: DNS
+  location: MESH_EXTERNAL
+---
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "nodejs-app.labels" . | nindent 4 }}
+spec:
+  selector:
+    istio: egress
+  servers:
+    - port:
+        number: 443
+        name: tls
+        protocol: TLS
+      hosts:
+        {{- toYaml .Values.istio.egress.hosts | nindent 8 }}
+      tls:
+        mode: PASSTHROUGH
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "nodejs-app.labels" . | nindent 4 }}
+spec:
+  hosts:
+    {{- toYaml .Values.istio.egress.hosts | nindent 4 }}
+  gateways:
+    - mesh
+    - {{ $name }}
+  tls:
+    {{- range .Values.istio.egress.hosts }}
+    - match:
+        - gateways:
+            - mesh
+          port: 443
+          sniHosts:
+            - {{ . }}
+      route:
+        - destination:
+            host: {{ $egressHost }}
+            port:
+              number: 443
+    - match:
+        - gateways:
+            - {{ $name }}
+          port: 443
+          sniHosts:
+            - {{ . }}
+      route:
+        - destination:
+            host: {{ . }}
+            port:
+              number: 443
+    {{- end }}
+{{- end }}

@@ -1,26 +1,5 @@
-{{- if and .Values.istio.enabled (.Capabilities.APIVersions.Has "networking.istio.io/v1") }}
+{{- if .Values.istio.enabled }}
 apiVersion: networking.istio.io/v1
-kind: VirtualService
-metadata:
-  name: {{ include "nodejs-app.fullname" . }}
-  labels:
-    {{- include "nodejs-app.labels" . | nindent 4 }}
-spec:
-  hosts:
-    {{- toYaml .Values.istio.hosts | nindent 4 }}
-  gateways:
-    - {{ .Values.istio.gatewayName }}
-  http:
-    - match:
-        - uri:
-            prefix: /
-      route:
-        - destination:
-            host: {{ include "nodejs-app.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
-            port:
-              number: {{ .Values.service.port }}
-{{- else if and .Values.istio.enabled (.Capabilities.APIVersions.Has "networking.istio.io/v1beta1") }}
-apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
   name: {{ include "nodejs-app.fullname" . }}

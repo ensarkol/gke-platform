@@ -49,11 +49,23 @@ istio:
   gatewayName: nodejs-app-gateway
   hosts:
     - "*"
+  egress:
+    enabled: true
+    namespace: istio-system
+    service: istio-egress
+    hosts:
+      - api.github.com
+
+metrics:
+  podMonitor:
+    enabled: true
+    interval: 15s
+    path: /metrics
 
 keda:
   enabled: true
   minReplicaCount: 3
-  maxReplicaCount: 5
+  maxReplicaCount: 3
   idleReplicaCount: 0
   initialCooldownPeriod: 3600
   cooldownPeriod: 300
@@ -68,7 +80,4 @@ serviceAccount:
   create: true
   name: ""
 
-podAnnotations:
-  prometheus.io/scrape: "true"
-  prometheus.io/port: "3000"
-  prometheus.io/path: "/metrics"
+podAnnotations: {}

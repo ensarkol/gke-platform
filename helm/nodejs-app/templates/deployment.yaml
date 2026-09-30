@@ -5,7 +5,9 @@ metadata:
   labels:
     {{- include "nodejs-app.labels" . | nindent 4 }}
 spec:
+  {{- if not (and .Values.keda.enabled (.Capabilities.APIVersions.Has "keda.sh/v1alpha1")) }}
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
   strategy:
     {{- toYaml .Values.strategy | nindent 4 }}
   selector:
@@ -16,8 +18,10 @@ spec:
       labels:
         {{- include "nodejs-app.selectorLabels" . | nindent 8 }}
         app: {{ include "nodejs-app.name" . }}
+      {{- with .Values.podAnnotations }}
       annotations:
-        {{- toYaml .Values.podAnnotations | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "nodejs-app.serviceAccountName" . }}
       nodeSelector:
