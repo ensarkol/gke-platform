@@ -15,7 +15,7 @@ terraform {
 }
 
 dependencies {
-  paths = ["../../apis"]
+  paths = ["../../apis", "../../gke"]
 }
 
 inputs = {

@@ -237,13 +237,12 @@ resource "kubernetes_job" "kibana_dataview" {
                 echo "waiting for kibana..."
                 sleep 10
               done
-              curl -sk -u "elastic:$${ELASTIC_PASSWORD}" \
+              curl -fsSk -u "elastic:$${ELASTIC_PASSWORD}" \
                 -X POST "https://test-kb-kb-http.elastic-system.svc:5601/api/data_views/data_view" \
                 -H "kbn-xsrf: true" \
                 -H "Content-Type: application/json" \
-                -d '{"data_view":{"title":"filebeat-*","name":"filebeat-logs","timeFieldName":"@timestamp"}}' \
-                || true
-              echo "data view step finished"
+                -d '{"override":true,"data_view":{"title":"filebeat-*","name":"filebeat-logs","timeFieldName":"@timestamp"}}'
+              echo "data view filebeat-* created"
             EOT
           ]
         }
@@ -251,11 +250,11 @@ resource "kubernetes_job" "kibana_dataview" {
     }
   }
 
-  wait_for_completion = false
+  wait_for_completion = true
 
   depends_on = [helm_release.eck_stack]
 
   timeouts {
-    create = "5m"
+    create = "15m"
   }
 }
