@@ -42,7 +42,8 @@ flowchart TB
     ar -. "image pull" .-> app
 
     lb -- "Gateway + VirtualService" --> app
-    app -- "ServiceEntry hosts only" --> egress -- "TLS passthrough" --> nat --> internet((Internet))    istiod -. "config + certs" .-> app
+    app -- "ServiceEntry hosts only" --> egress -- "TLS passthrough" --> nat --> internet((Internet))
+    istiod -. "config + certs" .-> app
 
     prom -- "scrape Envoy + /metrics" --> app
     keda -- "istio_requests_total" --> prom
