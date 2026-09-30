@@ -23,4 +23,7 @@ dependencies {
 inputs = {
   cluster_name                  = dependency.gke.outputs.name
   kube_prometheus_stack_version = "65.1.0"
+
+  # Bot token: kubectl -n monitoring create secret generic grafana-telegram --from-literal=TELEGRAM_BOT_TOKEN=...
+  telegram_chat_id = "7067419664"
 }

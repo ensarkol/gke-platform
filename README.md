@@ -153,6 +153,13 @@ kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
 - Istio metrik kontrolü: PromQL `istio_requests_total`
 - Grafana'da **PodRestartDetected** alarmı (unified alerting) tanımlıdır.
 
+Alarmı Telegram'a göndermek için bot token'ını secret olarak oluştur (git'e ve state'e girmez), `iac/k8s/prometheus-stack/terragrunt.hcl` içinde `telegram_chat_id`'yi doldurup apply et. `telegram_chat_id` boşsa contact point dummy webhook olarak kalır.
+
+```bash
+kubectl -n monitoring create secret generic grafana-telegram \
+  --from-literal=TELEGRAM_BOT_TOKEN='<botfather token>'
+```
+
 ### Node.js uygulaması
 
 Jenkins'te `03-nodejs-app` job'unu `ACTION=deploy` ile çalıştır: image'ı build/push eder ve chart'ı kurar.

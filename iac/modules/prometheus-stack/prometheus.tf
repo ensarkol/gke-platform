@@ -1,3 +1,23 @@
+locals {
+  telegram_receiver = {
+    uid  = "pod-restart"
+    type = "telegram"
+    settings = {
+      # Grafana expands $VAR in provisioning files from the grafana-telegram secret
+      bottoken = "$TELEGRAM_BOT_TOKEN"
+      chatid   = var.telegram_chat_id
+    }
+    disableResolveMessage = false
+  }
+  webhook_receiver = {
+    uid                   = "pod-restart"
+    type                  = "webhook"
+    settings              = { url = var.alert_webhook_url }
+    disableResolveMessage = false
+  }
+  alert_receiver = [local.telegram_receiver, local.webhook_receiver][var.telegram_chat_id != "" ? 0 : 1]
+}
+
 resource "kubernetes_namespace" "monitoring" {
   metadata {
     name = "monitoring"
@@ -96,31 +116,32 @@ resource "helm_release" "kube_prometheus_stack" {
           }
         }
         additionalDataSources = []
+        # Created by hand so the bot token stays out of git and Terraform state; optional until Telegram is set up
+        envFromSecrets = [
+          { name = "grafana-telegram", optional = true }
+        ]
         alerting = {
           # Keys become provisioning file names; Grafana skips files without a .yaml suffix
-          "contactpoints.yaml" = yamldecode(<<-EOT
-              apiVersion: 1
-              contactPoints:
-                - orgId: 1
-                  name: pod-restart-webhook
-                  receivers:
-                    - uid: pod-restart-webhook
-                      type: webhook
-                      settings:
-                        url: ${var.alert_webhook_url}
-                      disableResolveMessage: false
-            EOT
-          )
+          "contactpoints.yaml" = {
+            apiVersion = 1
+            contactPoints = [
+              {
+                orgId     = 1
+                name      = "pod-restart"
+                receivers = [local.alert_receiver]
+              }
+            ]
+          }
           "policies.yaml" = yamldecode(<<-EOT
               apiVersion: 1
               policies:
                 - orgId: 1
-                  receiver: pod-restart-webhook
+                  receiver: pod-restart
                   group_by:
                     - grafana_folder
                     - alertname
                   routes:
-                    - receiver: pod-restart-webhook
+                    - receiver: pod-restart
                       object_matchers:
                         - ["alertname", "=", "PodRestartDetected"]
             EOT
