@@ -281,7 +281,7 @@ sum(increase(istio_requests_total{reporter="source",destination_service_name="no
 
 The query looks at the last hour and KEDA then waits for `cooldownPeriod` (5 minutes) before scaling in, so the service reaches zero about 65 minutes after the last request.
 
-While the service is at zero replicas, the first requests receive a 503 from the gateway. They are still recorded by the ingress metrics, and KEDA brings the replicas back within its polling interval. `increase()` needs two samples of a series to see a change, so right after the ingress gateway or Prometheus restarts, a single request may not be enough; a second request a few seconds later wakes the service. Prometheus runs without persistent storage, so a Prometheus restart also clears the one-hour window and can scale the service to zero early.
+While the service is at zero replicas, the first requests receive a 503 from the gateway. They are still recorded by the ingress metrics, and KEDA brings the replicas back within its polling interval. `increase()` needs two samples of a series to see a change, so right after the ingress gateway or Prometheus restarts, a single request may not be enough; a second request a few seconds later wakes the service.
 
 A steady stream of requests wakes the service and keeps it running:
 
