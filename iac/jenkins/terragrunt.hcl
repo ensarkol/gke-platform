@@ -30,6 +30,8 @@ dependency "artifact_registry" {
 
 inputs = {
   subnetwork_id          = dependency.vpc.outputs.subnets_ids[0]
+  # europe-west1-b ran out of e2-standard-2 capacity; the jenkins subnet is regional so any zone works
+  zone                   = "europe-west1-c"
   network_tags           = ["jenkins"]
   machine_type           = "e2-standard-2"
   artifact_registry_repo = dependency.artifact_registry.outputs.artifact_name
