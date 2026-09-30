@@ -111,6 +111,12 @@ resource "helm_release" "eck_stack" {
               }]
             }]
           }
+          setup = {
+            template = {
+              overwrite = true
+              settings  = { index = { number_of_replicas = 0 } }
+            }
+          }
         }
         daemonSet = {
           podTemplate = {
